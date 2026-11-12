@@ -422,7 +422,7 @@ function syncUI() {
     sel.value = tm.formation || FORMATIONS[0];
   });
   $('#saveName').value = state.title || '';
-  applyView(); renderTimeline(); renderSelPanel(); renderSaved(); renderBench();
+  applyView(); renderTimeline(); renderSelPanel(); renderSaved(); renderBench(); renderMinute();
 }
 
 // ---------- Interaction pointeur ----------
@@ -959,10 +959,12 @@ function blankBoard(m, hTeam, aTeam) {
   Object.assign(s.teams.away, { name: m.away, color: ac });
   return s;
 }
-// teams : {home, away} avec {name, color?, formation?, starters:[{number, name, d, w}], bench:[{number, name, in}]}
-function buildBoard(m, teams) {
+// teams : {home, away} avec {name, color?, formation?, starters:[{number, name, d, w, xy?}], bench:[{number, name, in}]}
+// match : {src, id, comp?, hTeam?, aTeam?, minute, win} — conservé dans la palette pour pouvoir changer de minute
+function buildBoard(m, teams, match) {
   const s = newBoard(), keep = state;
-  s.title = matchTitle(m);
+  s.title = matchTitle(m) + (match.minute != null ? ` - ${match.minute}'` : '');
+  s.match = { ...match, m: { date: m.date, home: m.home, away: m.away, hs: m.hs, as: m.as, state: m.state } };
   state = s;                       // addToken travaille sur l'état courant
   try {
     for (const side of ['home', 'away']) {
@@ -984,38 +986,71 @@ function buildBoard(m, teams) {
       } else {
         const used = {};
         st.forEach(p => {
+          const line = p.d < 10 ? 0 : p.d < 28 ? 1 : p.d < 40 ? 2 : p.d < 52 ? 3 : p.d < 60 ? 4 : 5;
+          if (p.xy) { put(p, p.xy[0], p.xy[1], line); return; }      // position réelle
           let w = p.w; const key = p.d + ':' + p.w;
           if (used[key]) w += 8 * used[key];           // évite les superpositions
           used[key] = (used[key] || 0) + 1;
           let x = p.d * 0.66 / 100 * W, y = w / 100 * H;
           if (side === 'away') { x = W - x; y = H - y; }
-          put(p, x, y, p.d < 10 ? 0 : p.d < 28 ? 1 : p.d < 40 ? 2 : p.d < 52 ? 3 : p.d < 60 ? 4 : 5);
+          put(p, x, y, line);
         });
       }
     }
+    if (teams.ball) s.frames[0].pos[1] = { x: teams.ball[0], y: teams.ball[1] };
   } finally { state = keep; }
   return s;
 }
 
-async function loadStatsBomb(id, m) {
+// Coordonnées StatsBomb (120 × 80, chaque équipe attaque vers la droite) -> terrain de la palette
+function sbXY(loc, side) {
+  const x = clamp(loc[0], 0, 120) / 120 * W, y = clamp(loc[1], 0, 80) / 80 * H;
+  return side === 'away' ? [r2(W - x), r2(H - y)] : [r2(x), r2(y)];
+}
+const sbClock = t => { if (!t) return Infinity; const [a, b] = t.split(':').map(Number); return a + (b || 0) / 60; };
+let sbEvents = { id: null, ev: null };          // derniers événements chargés (fichier volumineux)
+
+// minute = null : composition de départ. Sinon : joueurs présents à cette minute, placés à la moyenne
+// des positions de leurs actions dans la fenêtre [minute - win, minute + win], et ballon au plus près de la minute.
+async function loadStatsBomb(id, m, minute = null, win = 5) {
   const lineups = await getJSON(`${SB}lineups/${id}.json`), teams = {};
+  let avg = {}, ball = null;
+  if (minute != null) {
+    if (sbEvents.id !== id) sbEvents = { id, ev: await getJSON(`${SB}events/${id}.json`) };
+    const sum = {};
+    for (const e of sbEvents.ev) {
+      if (!e.location || e.period > 4) continue;
+      const t = e.minute + e.second / 60;
+      if (!ball && t >= minute) ball = sbXY(e.location, e.team.name === m.away ? 'away' : 'home');
+      if (!e.player || t < minute - win || t > minute + win) continue;
+      const a = sum[e.player.id] ||= [0, 0, 0];
+      a[0] += e.location[0]; a[1] += e.location[1]; a[2]++;
+    }
+    for (const pid in sum) avg[pid] = [sum[pid][0] / sum[pid][2], sum[pid][1] / sum[pid][2]];
+  }
   ['home', 'away'].forEach((side, i) => {
     const lu = lineups.find(l => l.team_name === m[side]) || lineups[i];
-    const pl = lu.lineup.map(p => ({
-      number: String(p.jersey_number ?? ''), name: lastName(p.player_nickname || p.player_name),
-      pos: (p.positions || []).find(x => x.start_reason === 'Starting XI'), played: (p.positions || []).length > 0,
-    }));
+    const pl = lu.lineup.map(p => {
+      const ps = p.positions || [];
+      const pos = minute == null ? ps.find(x => x.start_reason === 'Starting XI')
+        : [...ps].reverse().find(x => sbClock(x.from) <= minute && minute < sbClock(x.to));
+      return { id: p.player_id, number: String(p.jersey_number ?? ''), name: lastName(p.player_nickname || p.player_name), pos, played: ps.length > 0 };
+    });
     const t = teams[side] = { name: m[side] };
     if (pl.some(p => p.pos)) {
-      t.starters = pl.filter(p => p.pos).map(p => { const [d, w] = SB_POS[p.pos.position] || [45, 50]; return { ...p, d, w }; });
+      t.starters = pl.filter(p => p.pos).map(p => {
+        const [d, w] = SB_POS[p.pos.position] || [45, 50];
+        return { number: p.number, name: p.name, d, w, xy: avg[p.id] && sbXY(avg[p.id], side) };
+      });
       t.bench = pl.filter(p => !p.pos).map(p => ({ number: p.number, name: p.name, in: p.played }));
     } else {                       // anciennes données sans postes : 11 premiers en 4-4-2
       t.formation = '4-4-2';
-      t.starters = pl.slice(0, 11).map((p, k) => ({ ...p, d: k, w: k }));
+      t.starters = pl.slice(0, 11).map((p, k) => ({ number: p.number, name: p.name, d: k, w: k }));
       t.bench = pl.slice(11).map(p => ({ number: p.number, name: p.name }));
     }
   });
-  return buildBoard(m, teams);
+  if (ball) teams.ball = ball;
+  return buildBoard(m, teams, { src: 'sb', id, minute, win });
 }
 
 function hexColor(c) { return /^[0-9a-f]{6}$/i.test(c || '') ? '#' + c.toLowerCase() : null; }
@@ -1028,7 +1063,8 @@ function teamColors(hTeam, aTeam) {
   const hc = hexColor(hTeam.color) || '#d62839';
   return [hc, [hexColor(aTeam.color), hexColor(aTeam.alternateColor), '#1d5fbf', '#f2c400'].find(c => c && colorDist(c, hc) > 110)];
 }
-async function loadEspn(comp, id, m, hTeam, aTeam) {
+// minute = null : composition de départ. Sinon : remplacements effectués jusqu'à cette minute (pas de positions réelles chez ESPN).
+async function loadEspn(comp, id, m, hTeam, aTeam, minute = null) {
   const d = await getJSON(`${ESPN}${comp}/summary?event=${id}`), teams = {};
   const rosters = d.rosters || [];
   ['home', 'away'].forEach((side, i) => {
@@ -1036,15 +1072,55 @@ async function loadEspn(comp, id, m, hTeam, aTeam) {
     const pl = (r && r.roster) || [];
     if (!pl.some(p => p.starter)) throw new Error('no lineup');
     const conv = p => ({ number: String(p.jersey ?? ''), name: p.athlete.lastName || lastName(p.athlete.displayName) });
+    const outMin = p => Math.max(0, ...(p.plays || []).filter(x => x.substitution).map(x => parseInt(x.clock && x.clock.displayValue) || 0));
+    const occupant = p => {            // qui occupe le poste de ce titulaire à la minute demandée
+      for (let k = 0; k < 5 && minute != null && p.subbedOut && p.subbedOutFor && outMin(p) <= minute; k++) {
+        const nx = pl.find(x => x.athlete.id === p.subbedOutFor.athlete.id);
+        if (!nx) break;
+        p = nx;
+      }
+      return p;
+    };
+    const on = pl.filter(p => p.starter).map(p => ({ slot: p, who: occupant(p) }));
     teams[side] = {
       name: m[side], formation: r.formation,
-      starters: pl.filter(p => p.starter).map(p => { const [dd, w] = espnPos(p.position && p.position.abbreviation); return { ...conv(p), d: dd, w }; }),
-      bench: pl.filter(p => !p.starter).map(p => ({ ...conv(p), in: !!p.subbedIn })),
+      starters: on.map(({ slot, who }) => { const [dd, w] = espnPos(slot.position && slot.position.abbreviation); return { ...conv(who), d: dd, w }; }),
+      bench: pl.filter(p => !on.some(o => o.who === p)).map(p => ({ ...conv(p), in: !!p.subbedIn })),
     };
   });
   [teams.home.color, teams.away.color] = teamColors(hTeam, aTeam);
-  return buildBoard(m, teams);
+  const slim = t => ({ color: t.color, alternateColor: t.alternateColor });
+  return buildBoard(m, teams, { src: 'espn', comp, id, minute, hTeam: slim(hTeam), aTeam: slim(aTeam) });
 }
+
+// ---------- Minute du match ----------
+function renderMinute() {
+  const mt = state.match, card = $('#minCard');
+  card.hidden = !mt;
+  if (!mt) return;
+  $('#minRange').value = mt.minute || 0;
+  $('#minLbl').textContent = (mt.minute || 0) + "'";
+  if (mt.win) $('#minWin').value = mt.win;
+  $('#winRow').hidden = mt.src !== 'sb';
+  $('#minHint').textContent = mt.src === 'sb'
+    ? "Remplace la palette par la situation à cette minute : joueurs présents, position moyenne réelle de chacun pendant la période choisie (d'après ses actions : passes, réceptions, conduites, pressings…) et ballon. Minute 0 : composition de départ."
+    : "Remplace la palette par la composition à cette minute (remplacements pris en compte). Les positions réelles des joueurs n'existent que pour les matchs des archives StatsBomb.";
+}
+$('#minRange').oninput = e => { $('#minLbl').textContent = e.target.value + "'"; };
+$('#minApply').onclick = async () => {
+  const mt = state.match, btn = $('#minApply');
+  if (!mt) return;
+  const minute = +$('#minRange').value || null;
+  btn.disabled = true; btn.textContent = 'Chargement…';
+  try {
+    const s = mt.src === 'sb' ? await loadStatsBomb(mt.id, mt.m, minute, +$('#minWin').value)
+      : await loadEspn(mt.comp, mt.id, mt.m, mt.hTeam, mt.aTeam, minute);
+    for (const k of ['home', 'away']) s.teams[k].color = state.teams[k].color;
+    s.view = state.view; s.mode = state.mode;
+    setState(s);
+  } catch (_) { alert('Données indisponibles pour cette minute.'); }
+  btn.disabled = false; btn.textContent = 'Afficher cette minute';
+};
 
 $('#btnMatches').onclick = () => {
   $('#modal').hidden = false;
