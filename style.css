@@ -97,3 +97,5 @@ main { flex: 1; display: flex; min-height: 0; }
 .chip button { padding: 3px 7px; font-size: 12px; }
 .chip button:first-child { border-radius: 6px 0 0 6px; }
 .chip button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; color: #8fa1b3; padding: 3px 5px; }
+#matchList .tag { margin-left: auto; font-size: 11px; padding: 1px 7px; border-radius: 10px; white-space: nowrap; background: #34424f; color: #cfd9e3; }
+#matchList .tag.in { background: #b3261e; color: #fff; }

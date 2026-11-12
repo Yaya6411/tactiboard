@@ -645,11 +645,16 @@ async function loadMatches() {
       const month = $('#monthSel').value;
       if (!month) { listMsg('Choisissez un mois.'); return; }
       const d = await getJSON(`${ESPN}${comp}/scoreboard?dates=${month.replace('-', '')}&limit=300`);
-      list = (d.events || []).filter(e => e.status.type.state !== 'pre').map(e => {
+      list = (d.events || []).map(e => {
         const cs = e.competitions[0].competitors;
         const h = cs.find(x => x.homeAway === 'home') || cs[0], a = cs.find(x => x.homeAway === 'away') || cs[1];
-        const m = { date: e.date.slice(0, 10), home: h.team.displayName, away: a.team.displayName, hs: h.score, as: a.score };
+        const dt = new Date(e.date), p2 = n => String(n).padStart(2, '0');
+        const m = {
+          date: `${dt.getFullYear()}-${p2(dt.getMonth() + 1)}-${p2(dt.getDate())}`, time: `${p2(dt.getHours())}:${p2(dt.getMinutes())}`,
+          state: e.status.type.state, home: h.team.displayName, away: a.team.displayName, hs: h.score, as: a.score,
+        };
         m.load = () => loadEspn(comp, e.id, m, h.team, a.team);
+        m.blank = () => blankBoard(m, h.team, a.team);
         return m;
       });
     } else {
@@ -670,22 +675,34 @@ async function loadMatches() {
 
 function renderMatches() {
   const q = $('#matchFilter').value.trim().toLowerCase(), sort = $('#sortSel').value;
+  const key = m => m.date + (m.time || '');
   const list = matches.filter(m => !q || (m.home + ' ' + m.away).toLowerCase().includes(q));
   list.sort(sort === 'team' ? (a, b) => a.home.localeCompare(b.home, 'fr') || a.date.localeCompare(b.date)
-    : sort === 'asc' ? (a, b) => a.date.localeCompare(b.date) : (a, b) => b.date.localeCompare(a.date));
-  if (!list.length) { listMsg(matches.length ? 'Aucun match pour ce filtre.' : 'Aucun match joué sur cette période.'); return; }
+    : sort === 'asc' ? (a, b) => key(a).localeCompare(key(b)) : (a, b) => key(b).localeCompare(key(a)));
+  if (!list.length) { listMsg(matches.length ? 'Aucun match pour ce filtre.' : 'Aucun match sur cette période.'); return; }
   const box = $('#matchList'); box.textContent = '';
   list.forEach(m => {
     const b = document.createElement('button');
     const d = document.createElement('span'); d.className = 'd'; d.textContent = m.date;
     const t = document.createElement('span');
-    const s = document.createElement('span'); s.className = 's'; s.textContent = `${m.hs} – ${m.as}`;
+    const s = document.createElement('span'); s.className = 's'; s.textContent = m.state === 'pre' ? 'vs' : `${m.hs} – ${m.as}`;
     t.append(m.home + ' ', s, ' ' + m.away);
     b.append(d, t);
+    if (m.state === 'pre' || m.state === 'in') {
+      const tag = document.createElement('span'); tag.className = 'tag ' + m.state;
+      tag.textContent = m.state === 'pre' ? `À venir · ${m.time}` : 'En cours';
+      b.appendChild(tag);
+    }
     b.onclick = async () => {
       b.disabled = true;
       try { setState(await m.load()); $('#modal').hidden = true; }
-      catch (_) { alert('Composition indisponible pour ce match.'); }
+      catch (_) {
+        if (m.state === 'pre' && m.blank) {
+          if (confirm("Les compositions officielles ne sont pas encore publiées (en général une heure avant le coup d'envoi).\n\nCréer quand même une palette avec les deux équipes ?")) {
+            setState(m.blank()); $('#modal').hidden = true;
+          }
+        } else alert('Composition indisponible pour ce match.');
+      }
       b.disabled = false;
     };
     box.appendChild(b);
@@ -699,10 +716,24 @@ function lastName(full) {
   return parts.slice(i).join(' ');
 }
 
+function matchTitle(m) {
+  return m.state === 'pre' ? `${m.home} - ${m.away} (${m.date})` : `${m.home} ${m.hs}-${m.as} ${m.away} (${m.date})`;
+}
+// Match à venir sans composition publiée : les deux équipes dans une formation par défaut
+function blankBoard(m, hTeam, aTeam) {
+  const s = newBoard(), keep = state;
+  s.title = matchTitle(m);
+  state = s;
+  try { applyFormation('home', '4-3-3'); applyFormation('away', '4-3-3'); } finally { state = keep; }
+  const [hc, ac] = teamColors(hTeam, aTeam);
+  Object.assign(s.teams.home, { name: m.home, color: hc });
+  Object.assign(s.teams.away, { name: m.away, color: ac });
+  return s;
+}
 // teams : {home, away} avec {name, color?, formation?, starters:[{number, name, d, w}], bench:[{number, name, in}]}
 function buildBoard(m, teams) {
   const s = newBoard(), keep = state;
-  s.title = `${m.home} ${m.hs}-${m.as} ${m.away} (${m.date})`;
+  s.title = matchTitle(m);
   state = s;                       // addToken travaille sur l'état courant
   try {
     for (const side of ['home', 'away']) {
@@ -764,6 +795,10 @@ function colorDist(a, b) {
   const [x, y] = [p(a), p(b)];
   return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
 }
+function teamColors(hTeam, aTeam) {
+  const hc = hexColor(hTeam.color) || '#d62839';
+  return [hc, [hexColor(aTeam.color), hexColor(aTeam.alternateColor), '#1d5fbf', '#f2c400'].find(c => c && colorDist(c, hc) > 110)];
+}
 async function loadEspn(comp, id, m, hTeam, aTeam) {
   const d = await getJSON(`${ESPN}${comp}/summary?event=${id}`), teams = {};
   const rosters = d.rosters || [];
@@ -778,9 +813,7 @@ async function loadEspn(comp, id, m, hTeam, aTeam) {
       bench: pl.filter(p => !p.starter).map(p => ({ ...conv(p), in: !!p.subbedIn })),
     };
   });
-  const hc = hexColor(hTeam.color) || '#d62839';
-  let ac = [hexColor(aTeam.color), hexColor(aTeam.alternateColor), '#1d5fbf', '#f2c400'].find(c => c && colorDist(c, hc) > 110);
-  teams.home.color = hc; teams.away.color = ac;
+  [teams.home.color, teams.away.color] = teamColors(hTeam, aTeam);
   return buildBoard(m, teams);
 }
 
@@ -800,7 +833,7 @@ $('#sortSel').onchange = renderMatches;
 for (const t in TYPES) $('#typeSel').add(new Option(TYPES[t], t));
 {
   const now = new Date(), ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  $('#monthSel').value = ym; $('#monthSel').max = ym;
+  $('#monthSel').value = ym;
 }
 
 // ---------- Remplaçants ----------
