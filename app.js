@@ -118,17 +118,112 @@ function drawPitch() {
 }
 
 // ---------- Rendu dynamique ----------
+// Trajectoires de l'étape i dictées par les flèches rattachées à un pion : {id: [[x, y], …]}
+function framePaths(i) {
+  const f = state.frames[i], out = {};
+  if (!f) return out;
+  const ball = state.tokens.find(t => t.team === 'ball');
+  f.drawings.forEach(d => {
+    const p = f.pos[d.from];
+    if (d.from == null || !p) return;
+    out[d.from] = [[p.x, p.y], ...d.pts.slice(1)];
+  });
+  f.drawings.forEach(d => {          // conduite de balle : le ballon suit le joueur
+    if (!d.ball || !ball || !out[d.from] || out[ball.id]) return;
+    const p = f.pos[d.from], q = f.pos[ball.id];
+    out[ball.id] = out[d.from].map(([x, y]) => [x + q.x - p.x, y + q.y - p.y]);
+  });
+  return out;
+}
+const hasMoves = i => Object.keys(framePaths(i)).length > 0;
+// Positions à la fin de l'étape i, une fois les flèches parcourues
+function endPositions(i) {
+  const pos = JSON.parse(JSON.stringify(state.frames[i].pos)), paths = framePaths(i);
+  for (const id in paths) {
+    const e = paths[id][paths[id].length - 1];
+    pos[id] = { x: r2(e[0]), y: r2(e[1]) };
+  }
+  return pos;
+}
+// Point situé à la fraction f (0-1) de la longueur d'une ligne brisée
+function along(pts, f) {
+  const seg = [];
+  let total = 0;
+  for (let k = 1; k < pts.length; k++) { seg.push(Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1])); total += seg[k - 1]; }
+  if (!total) return pts[0];
+  let rest = f * total;
+  for (let k = 0; k < seg.length; k++) {
+    if (rest <= seg[k] || k === seg.length - 1) {
+      const u = seg[k] ? Math.min(1, rest / seg[k]) : 0;
+      return [pts[k][0] + (pts[k + 1][0] - pts[k][0]) * u, pts[k][1] + (pts[k + 1][1] - pts[k][1]) * u];
+    }
+    rest -= seg[k];
+  }
+}
+
 function currentPositions() {
   if (!play) return state.frames[state.cur].pos;
-  const i = Math.min(Math.floor(play.t), state.frames.length - 2);
+  const i = Math.max(0, Math.min(Math.floor(play.t), play.end - 1));
   let f = clamp(play.t - i, 0, 1);
   f = f * f * (3 - 2 * f);   // lissage
-  const a = state.frames[i].pos, b = state.frames[i + 1].pos, out = {};
+  const a = state.frames[i].pos, b = state.frames[i + 1] ? state.frames[i + 1].pos : null, paths = framePaths(i), out = {};
   for (const id in a) {
-    const q = b[id] || a[id];
-    out[id] = { x: a[id].x + (q.x - a[id].x) * f, y: a[id].y + (q.y - a[id].y) * f };
+    let pts = paths[id];
+    if (pts) {
+      const e = pts[pts.length - 1];
+      if (b && b[id] && Math.hypot(e[0] - b[id].x, e[1] - b[id].y) > 0.5) pts = [...pts, [b[id].x, b[id].y]];
+      const q = along(pts, f);
+      out[id] = { x: q[0], y: q[1] };
+    } else {
+      const q = (b && b[id]) || a[id];
+      out[id] = { x: a[id].x + (q.x - a[id].x) * f, y: a[id].y + (q.y - a[id].y) * f };
+    }
   }
   return out;
+}
+
+// Rattache une flèche au joueur (course, conduite, tracé libre) ou au ballon (passe) d'où elle part
+function attachDrawing(d) {
+  const frame = state.frames[state.cur], pos = frame.pos, s0 = d.pts[0];
+  const near = (ok, max) => {
+    let best = null;
+    state.tokens.forEach(t => {
+      if (!ok(t)) return;
+      const dist = Math.hypot(pos[t.id].x - s0[0], pos[t.id].y - s0[1]);
+      if (dist < max) { max = dist; best = t; }
+    });
+    return best;
+  };
+  const isBall = t => t.team === 'ball';
+  let t = null;
+  if (d.type === 'pass') t = near(isBall, 4);
+  else if (d.type === 'dribble') t = near(x => !isBall(x), 2.5);
+  else if (d.type === 'arrow' || d.type === 'free') t = near(x => !isBall(x), 2.5) || near(isBall, 1.5);
+  if (!t) return;
+  frame.drawings.forEach(o => { if (o.from === t.id) { delete o.from; delete o.ball; } });
+  d.from = t.id;
+  const p = pos[t.id];
+  if (d.type === 'dribble') {
+    const ball = state.tokens.find(isBall);
+    if (ball && Math.hypot(pos[ball.id].x - p.x, pos[ball.id].y - p.y) < 4) d.ball = true;
+  }
+  if (d.type === 'free') { const dx = p.x - s0[0], dy = p.y - s0[1]; d.pts = d.pts.map(([x, y]) => [r2(x + dx), r2(y + dy)]); }
+  else d.pts[0] = [p.x, p.y];
+}
+function detach(ids) {
+  state.frames.forEach(f => f.drawings.forEach(d => { if (ids.includes(d.from)) { delete d.from; delete d.ball; } }));
+}
+// Ligne ondulée (conduite de balle)
+function wavy(a, b) {
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  if (L < 3.5) return `M${r2(a[0])} ${r2(a[1])} L${r2(b[0])} ${r2(b[1])}`;
+  const ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L, out = [];
+  for (let d = 0; d <= L - 2; d += 0.25) {
+    const o = 0.6 * Math.sin(d * 2.6) * Math.min(1, d, L - 2 - d);
+    out.push(`${r2(a[0] + ux * d - uy * o)} ${r2(a[1] + uy * d + ux * o)}`);
+  }
+  out.push(`${r2(b[0])} ${r2(b[1])}`);
+  return 'M' + out.join(' L');
 }
 
 function arrowHead(g, a, b, color, size) {
@@ -149,7 +244,7 @@ function drawShape(g, d, idx) {
     }, grp);
     return;
   }
-  const path = 'M' + pts.map(p => `${r2(p[0])} ${r2(p[1])}`).join(' L');
+  const path = d.type === 'dribble' ? wavy(pts[0], pts[1]) : 'M' + pts.map(p => `${r2(p[0])} ${r2(p[1])}`).join(' L');
   if (d.type === 'pass') attrs['stroke-dasharray'] = '1.2 1';
   el('path', { d: path, ...attrs }, grp);
   el('path', { d: path, fill: 'none', stroke: '#000', 'stroke-opacity': 0, 'stroke-width': 2.5 }, grp); // zone de clic
@@ -328,6 +423,11 @@ svg.addEventListener('pointermove', e => {
       pos[id].x = clamp(pos[id].x + dx, -3, W + 3);
       pos[id].y = clamp(pos[id].y + dy, -3, H + 3);
     });
+    state.frames[state.cur].drawings.forEach(d => {
+      if (!selection.includes(d.from)) return;
+      if (d.type === 'free') d.pts = d.pts.map(([x, y]) => [x + dx, y + dy]);
+      else d.pts[0] = [pos[d.from].x, pos[d.from].y];
+    });
     drag.last = p; drag.moved = true;
   } else if (drag.type === 'marquee') {
     drag.end = p;
@@ -356,6 +456,7 @@ function endPointer() {
     if (len > 1.5) {
       snapshot();
       d.draft.pts = pts.map(q => [r2(q[0]), r2(q[1])]);
+      attachDrawing(d.draft);
       state.frames[state.cur].drawings.push(d.draft);
     }
   }
@@ -370,9 +471,11 @@ svg.addEventListener('dblclick', e => {
 
 // ---------- Lecture / animation ----------
 function startPlay() {
-  if (state.frames.length < 2) { alert('Ajoutez au moins une deuxième étape (« + Étape »), déplacez les joueurs, puis lancez la lecture.'); return; }
+  const n = state.frames.length;
+  const end = n - 1 + (hasMoves(n - 1) ? 1 : 0);     // la dernière étape se joue aussi si elle contient des flèches rattachées
+  if (!end) { alert('Tracez une flèche de course, de conduite ou de passe en partant d\'un joueur ou du ballon, ou ajoutez une étape (« + Étape ») et déplacez les joueurs, puis lancez la lecture.'); return; }
   selection = []; renderSelPanel();
-  play = { t: state.cur >= state.frames.length - 1 ? 0 : state.cur, last: null };
+  play = { t: state.cur >= end ? 0 : state.cur, last: null, end };
   $('#btnPlay').textContent = '⏸ Pause';
   requestAnimationFrame(tick);
 }
@@ -387,10 +490,16 @@ function tick(ts) {
   if (!play) return;
   if (play.last != null) play.t += (ts - play.last) / 1500 * +$('#speed').value;
   play.last = ts;
-  const end = state.frames.length - 1;
-  if (play.t >= end) {
+  if (play.t >= play.end) {
     if ($('#loop').checked) { play.t = 0; }
-    else { play.t = end; stopPlay(); return; }
+    else {
+      const n = state.frames.length;
+      if (play.end > n - 1) {                        // les flèches de la dernière étape deviennent une nouvelle étape
+        snapshot();
+        state.frames.push({ pos: endPositions(n - 1), drawings: [] });
+      }
+      play.t = play.end; stopPlay(); return;
+    }
   }
   const i = Math.floor(play.t);
   $$('#frames button').forEach((b, k) => b.classList.toggle('on', k === i));
@@ -408,8 +517,7 @@ $('#btnClearDraw').onclick = () => { snapshot(); state.frames[state.cur].drawing
 $('#btnPlay').onclick = () => play ? stopPlay() : startPlay();
 $('#btnAddFrame').onclick = () => {
   stopPlay(); snapshot();
-  const f = state.frames[state.cur];
-  state.frames.splice(state.cur + 1, 0, { pos: JSON.parse(JSON.stringify(f.pos)), drawings: [] });
+  state.frames.splice(state.cur + 1, 0, { pos: endPositions(state.cur), drawings: [] });
   state.cur++;
   renderTimeline(); render();
 };
@@ -455,6 +563,7 @@ function deleteSelection() {
   snapshot();
   state.tokens = state.tokens.filter(t => !ids.includes(t.id));
   state.frames.forEach(f => ids.forEach(id => delete f.pos[id]));
+  detach(ids);
   selection = []; renderSelPanel(); render();
 }
 $('#selDel').onclick = deleteSelection;
@@ -880,6 +989,7 @@ $('#selBench').onclick = () => {
   state.teams[t.team].bench.push({ number: t.number, name: t.name });
   state.tokens = state.tokens.filter(x => x !== t);
   state.frames.forEach(f => delete f.pos[t.id]);
+  detach([t.id]);
   selection = []; renderBench(); renderSelPanel(); render();
 };
 $$('.team').forEach(c => {

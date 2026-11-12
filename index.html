@@ -27,11 +27,12 @@
 <main>
   <aside id="tools">
     <button data-tool="select" class="on" title="Sélectionner / déplacer (glisser dans le vide = sélection multiple)">↖<small>Sélection</small></button>
-    <button data-tool="arrow" title="Flèche de course">➜<small>Course</small></button>
-    <button data-tool="pass" title="Flèche de passe (pointillés)">⇢<small>Passe</small></button>
+    <button data-tool="arrow" title="Course : partir d'un joueur, il suivra la flèche à la lecture">➜<small>Course</small></button>
+    <button data-tool="dribble" title="Conduite de balle : partir d'un joueur, il emmène le ballon">〰<small>Conduite</small></button>
+    <button data-tool="pass" title="Passe : partir du ballon (ou du joueur qui l'a), le ballon suivra la flèche">⇢<small>Passe</small></button>
     <button data-tool="line" title="Ligne droite">／<small>Ligne</small></button>
     <button data-tool="zone" title="Zone rectangulaire">▭<small>Zone</small></button>
-    <button data-tool="free" title="Tracé libre avec flèche">✎<small>Libre</small></button>
+    <button data-tool="free" title="Tracé libre : parti d'un joueur, il suivra la courbe à la lecture">✎<small>Libre</small></button>
     <button data-tool="erase" title="Gomme : cliquer sur un dessin">⌫<small>Gomme</small></button>
     <input type="color" id="drawColor" value="#ffd60a" title="Couleur des dessins">
     <button id="btnClearDraw" title="Effacer tous les dessins de l'étape">🗑<small>Dessins</small></button>
@@ -88,7 +89,7 @@
       <div class="row"><input id="saveName" type="text" placeholder="Nom de la palette"><button id="btnSave">Enregistrer</button></div>
       <ul id="savedList"></ul>
     </div>
-    <p class="hint">Astuces : double-clic sur un joueur pour le renommer · cliquer sur une ligne pour déplacer tout le bloc · sélectionner un joueur puis cliquer sur un remplaçant pour faire le changement · Espace = lecture · Suppr = supprimer la sélection.</p>
+    <p class="hint">Astuces : tracer une flèche en partant d'un joueur (course, conduite) ou du ballon (passe), puis Lecture : ils suivent la flèche · double-clic sur un joueur pour le renommer · cliquer sur une ligne pour déplacer tout le bloc · sélectionner un joueur puis cliquer sur un remplaçant pour faire le changement · Espace = lecture · Suppr = supprimer la sélection.</p>
   </aside>
 </main>
 
