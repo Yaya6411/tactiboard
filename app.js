@@ -47,7 +47,7 @@ function formationPositions(str, team) {
 
 function newBoard() {
   const s = {
-    v: 1, title: '', mode: 'players', nextId: 1,
+    v: 2, title: '', mode: 'players', nextId: 1,
     teams: { home: { name: 'Équipe A', color: '#d62839', formation: '4-3-3', bench: [] }, away: { name: 'Équipe B', color: '#1d5fbf', formation: '4-4-2', bench: [] } },
     tokens: [], frames: [{ pos: {}, drawings: [] }], cur: 0,
   };
@@ -135,6 +135,16 @@ function framePaths(i) {
     }
   });
   for (const id in out) out[id].unshift([f.pos[id].x, f.pos[id].y]);
+  // le ballon sans flèche propre accompagne le joueur en mouvement qui l'a dans les pieds
+  if (ball && f.pos[ball.id] && !out[ball.id]) {
+    const q = f.pos[ball.id];
+    let best = null, bd = 2.6;
+    for (const id in out) {
+      const dd = Math.hypot(f.pos[id].x - q.x, f.pos[id].y - q.y);
+      if (dd < bd) { bd = dd; best = id; }
+    }
+    if (best) out[ball.id] = out[best].map(([x, y]) => [x + q.x - f.pos[best].x, y + q.y - f.pos[best].y]);
+  }
   return out;
 }
 const hasMoves = i => Object.keys(framePaths(i)).length > 0;
@@ -185,9 +195,9 @@ function currentPositions() {
 }
 
 // Rattache une flèche au joueur (course, conduite, tracé libre) ou au ballon (passe) le plus proche de son départ
-function attachDrawing(d) {
+function attachDrawing(d, fi = state.cur) {
   const R = 4.5;                                    // rayon d'accroche en mètres
-  const frame = state.frames[state.cur], pos = frame.pos, s0 = d.pts[0];
+  const frame = state.frames[fi], pos = frame.pos, s0 = d.pts[0];
   const isBall = t => t.team === 'ball';
   const dist = q => Math.hypot(q.x - s0[0], q.y - s0[1]);
   const near = (ok, max) => {
@@ -196,7 +206,7 @@ function attachDrawing(d) {
     return best;
   };
   const ball = state.tokens.find(isBall), player = near(t => !isBall(t), R);
-  const ballPath = ball && framePaths(state.cur)[ball.id];   // le ballon bouge déjà dans cette étape ?
+  const ballPath = ball && frame.drawings.some(o => o.from === ball.id || o.ball) && framePaths(fi)[ball.id];   // le ballon bouge déjà dans cette étape ?
   const snap = q => {                               // fait partir la flèche exactement du pion
     if (d.type === 'free') { const dx = q.x - s0[0], dy = q.y - s0[1]; d.pts = d.pts.map(([x, y]) => [r2(x + dx), r2(y + dy)]); }
     else d.pts[0] = [q.x, q.y];
@@ -1034,6 +1044,13 @@ for (const t in TYPES) $('#typeSel').add(new Option(TYPES[t], t));
 // ---------- Remplaçants ----------
 function normalize(s) {
   for (const k of ['home', 'away']) s.teams[k].bench ||= [];
+  if ((s.v || 1) < 2) {            // anciennes palettes : rattache les flèches tracées avant la mise à jour
+    s.v = 2;
+    const keep = state;
+    state = s;
+    try { s.frames.forEach((f, fi) => f.drawings.forEach(d => { if (d.from == null) attachDrawing(d, fi); })); }
+    finally { state = keep; }
+  }
   return s;
 }
 function renderBench() {
