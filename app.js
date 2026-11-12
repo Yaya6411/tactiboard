@@ -123,16 +123,18 @@ function framePaths(i) {
   const f = state.frames[i], out = {};
   if (!f) return out;
   const ball = state.tokens.find(t => t.team === 'ball');
-  f.drawings.forEach(d => {
+  const add = (id, pts) => { out[id] = (out[id] || []).concat(pts); };
+  f.drawings.forEach(d => {          // plusieurs flèches du même pion s'enchaînent dans l'ordre du tracé
     const p = f.pos[d.from];
     if (d.from == null || !p) return;
-    out[d.from] = [[p.x, p.y], ...d.pts.slice(1)];
+    add(d.from, d.pts);
+    if (d.ball && ball && f.pos[ball.id]) {          // conduite de balle : le ballon suit le joueur
+      let ox = f.pos[ball.id].x - p.x, oy = f.pos[ball.id].y - p.y;
+      if (out[ball.id] || Math.hypot(ox, oy) > 4) { ox = 1.3; oy = 0.9; }
+      add(ball.id, d.pts.map(([x, y]) => [x + ox, y + oy]));
+    }
   });
-  f.drawings.forEach(d => {          // conduite de balle : le ballon suit le joueur
-    if (!d.ball || !ball || !out[d.from] || out[ball.id]) return;
-    const p = f.pos[d.from], q = f.pos[ball.id];
-    out[ball.id] = out[d.from].map(([x, y]) => [x + q.x - p.x, y + q.y - p.y]);
-  });
+  for (const id in out) out[id].unshift([f.pos[id].x, f.pos[id].y]);
   return out;
 }
 const hasMoves = i => Object.keys(framePaths(i)).length > 0;
@@ -182,33 +184,56 @@ function currentPositions() {
   return out;
 }
 
-// Rattache une flèche au joueur (course, conduite, tracé libre) ou au ballon (passe) d'où elle part
+// Rattache une flèche au joueur (course, conduite, tracé libre) ou au ballon (passe) le plus proche de son départ
 function attachDrawing(d) {
+  const R = 4.5;                                    // rayon d'accroche en mètres
   const frame = state.frames[state.cur], pos = frame.pos, s0 = d.pts[0];
+  const isBall = t => t.team === 'ball';
+  const dist = q => Math.hypot(q.x - s0[0], q.y - s0[1]);
   const near = (ok, max) => {
     let best = null;
-    state.tokens.forEach(t => {
-      if (!ok(t)) return;
-      const dist = Math.hypot(pos[t.id].x - s0[0], pos[t.id].y - s0[1]);
-      if (dist < max) { max = dist; best = t; }
-    });
+    state.tokens.forEach(t => { if (ok(t) && dist(pos[t.id]) < max) { max = dist(pos[t.id]); best = t; } });
     return best;
   };
-  const isBall = t => t.team === 'ball';
-  let t = null;
-  if (d.type === 'pass') t = near(isBall, 4);
-  else if (d.type === 'dribble') t = near(x => !isBall(x), 2.5);
-  else if (d.type === 'arrow' || d.type === 'free') t = near(x => !isBall(x), 2.5) || near(isBall, 1.5);
-  if (!t) return;
-  frame.drawings.forEach(o => { if (o.from === t.id) { delete o.from; delete o.ball; } });
-  d.from = t.id;
-  const p = pos[t.id];
-  if (d.type === 'dribble') {
-    const ball = state.tokens.find(isBall);
-    if (ball && Math.hypot(pos[ball.id].x - p.x, pos[ball.id].y - p.y) < 4) d.ball = true;
+  const ball = state.tokens.find(isBall), player = near(t => !isBall(t), R);
+  const ballPath = ball && framePaths(state.cur)[ball.id];   // le ballon bouge déjà dans cette étape ?
+  const snap = q => {                               // fait partir la flèche exactement du pion
+    if (d.type === 'free') { const dx = q.x - s0[0], dy = q.y - s0[1]; d.pts = d.pts.map(([x, y]) => [r2(x + dx), r2(y + dy)]); }
+    else d.pts[0] = [q.x, q.y];
+  };
+  const giveBall = t => {                           // place le ballon dans les pieds du joueur
+    pos[ball.id] = { x: clamp(pos[t.id].x + 1.3, -3, W + 3), y: clamp(pos[t.id].y + 0.9, -3, H + 3) };
+  };
+  if (d.type === 'pass') {
+    if (!ball) return;
+    if (ballPath) {                                 // passe suivante : elle s'enchaîne après la précédente
+      const tip = ballPath[ballPath.length - 1];
+      if (player || dist({ x: tip[0], y: tip[1] }) < R) d.from = ball.id;
+    } else if (dist(pos[ball.id]) < R || player) {
+      if (dist(pos[ball.id]) >= R) giveBall(player);
+      d.from = ball.id;
+      snap(pos[ball.id]);
+    }
+    return;
   }
-  if (d.type === 'free') { const dx = p.x - s0[0], dy = p.y - s0[1]; d.pts = d.pts.map(([x, y]) => [r2(x + dx), r2(y + dy)]); }
-  else d.pts[0] = [p.x, p.y];
+  if (d.type !== 'arrow' && d.type !== 'free' && d.type !== 'dribble') return;
+  const t = player || (d.type !== 'dribble' && ball && dist(pos[ball.id]) < 2 ? ball : null);
+  if (!t) return;
+  const chained = frame.drawings.some(o => o.from === t.id);
+  d.from = t.id;
+  if (!chained) snap(pos[t.id]);
+  if (d.type === 'dribble' && ball) {
+    const near4 = Math.hypot(pos[ball.id].x - pos[t.id].x, pos[ball.id].y - pos[t.id].y) < 4;
+    if (!near4 && !ballPath) giveBall(t);
+    if (near4 || !ballPath) d.ball = true;
+  }
+}
+// Aligne l'étape suivante (si elle existe) sur l'arrivée des flèches de l'étape courante
+function syncNext() {
+  const next = state.frames[state.cur + 1];
+  if (!next) return;
+  const paths = framePaths(state.cur), e = endPositions(state.cur);
+  for (const id in paths) next.pos[id] = e[id];
 }
 function detach(ids) {
   state.frames.forEach(f => f.drawings.forEach(d => { if (ids.includes(d.from)) { delete d.from; delete d.ball; } }));
@@ -423,8 +448,10 @@ svg.addEventListener('pointermove', e => {
       pos[id].x = clamp(pos[id].x + dx, -3, W + 3);
       pos[id].y = clamp(pos[id].y + dy, -3, H + 3);
     });
-    state.frames[state.cur].drawings.forEach(d => {
-      if (!selection.includes(d.from)) return;
+    const seen = {};
+    state.frames[state.cur].drawings.forEach(d => {     // la première flèche de chaque pion déplacé le suit
+      if (!selection.includes(d.from) || seen[d.from]) return;
+      seen[d.from] = true;
       if (d.type === 'free') d.pts = d.pts.map(([x, y]) => [x + dx, y + dy]);
       else d.pts[0] = [pos[d.from].x, pos[d.from].y];
     });
@@ -458,6 +485,7 @@ function endPointer() {
       d.draft.pts = pts.map(q => [r2(q[0]), r2(q[1])]);
       attachDrawing(d.draft);
       state.frames[state.cur].drawings.push(d.draft);
+      syncNext();
     }
   }
   render();
@@ -473,7 +501,8 @@ svg.addEventListener('dblclick', e => {
 function startPlay() {
   const n = state.frames.length;
   const end = n - 1 + (hasMoves(n - 1) ? 1 : 0);     // la dernière étape se joue aussi si elle contient des flèches rattachées
-  if (!end) { alert('Tracez une flèche de course, de conduite ou de passe en partant d\'un joueur ou du ballon, ou ajoutez une étape (« + Étape ») et déplacez les joueurs, puis lancez la lecture.'); return; }
+  const moving = state.frames.some((f, i) => hasMoves(i) || (i > 0 && JSON.stringify(f.pos) !== JSON.stringify(state.frames[i - 1].pos)));
+  if (!end || !moving) { alert('Rien ne bouge pour l\'instant. Tracez une flèche de course, de conduite ou de passe en partant d\'un joueur ou du ballon, ou ajoutez une étape (« + Étape ») et déplacez les joueurs, puis lancez la lecture.'); return; }
   selection = []; renderSelPanel();
   play = { t: state.cur >= end ? 0 : state.cur, last: null, end };
   $('#btnPlay').textContent = '⏸ Pause';
@@ -647,7 +676,7 @@ $('#btnPng').onclick = () => {
 async function exportVideo() {
   stopPlay();
   const n = state.frames.length, end = n - 1 + (hasMoves(n - 1) ? 1 : 0);
-  if (!end) { alert('Il n\'y a pas encore d\'animation à exporter : tracez des flèches depuis des joueurs ou le ballon, ou ajoutez une étape.'); return; }
+  if (!end || !state.frames.some((f, i) => hasMoves(i) || (i > 0 && JSON.stringify(f.pos) !== JSON.stringify(state.frames[i - 1].pos)))) { alert('Il n\'y a pas encore d\'animation à exporter : tracez des flèches depuis des joueurs ou le ballon, ou ajoutez une étape.'); return; }
   const mime = window.MediaRecorder && HTMLCanvasElement.prototype.captureStream
     && ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m));
   if (!mime) { alert('Ce navigateur ne permet pas l\'export vidéo. Essayez avec Chrome, Edge ou Firefox.'); return; }
