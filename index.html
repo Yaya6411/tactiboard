@@ -56,6 +56,7 @@
       <h3>Joueur sélectionné</h3>
       <label>Nom <input id="selName" type="text"></label>
       <label>Numéro <input id="selNum" type="text" maxlength="3"></label>
+      <button id="selBench">Envoyer sur le banc</button>
       <button id="selDel" class="danger">Supprimer</button>
     </div>
     <div class="card team" data-team="home">
@@ -66,6 +67,9 @@
         <button class="tApply">Appliquer</button>
       </div>
       <button class="tAdd">+ Ajouter un joueur</button>
+      <h3 class="benchTitle">Remplaçants</h3>
+      <div class="bench"></div>
+      <button class="tAddSub">+ Remplaçant</button>
     </div>
     <div class="card team" data-team="away">
       <h3>Équipe 2</h3>
@@ -75,13 +79,16 @@
         <button class="tApply">Appliquer</button>
       </div>
       <button class="tAdd">+ Ajouter un joueur</button>
+      <h3 class="benchTitle">Remplaçants</h3>
+      <div class="bench"></div>
+      <button class="tAddSub">+ Remplaçant</button>
     </div>
     <div class="card">
       <h3>Mes palettes</h3>
       <div class="row"><input id="saveName" type="text" placeholder="Nom de la palette"><button id="btnSave">Enregistrer</button></div>
       <ul id="savedList"></ul>
     </div>
-    <p class="hint">Astuces : double-clic sur un joueur pour le renommer · cliquer sur une ligne pour déplacer tout le bloc · Espace = lecture · Suppr = supprimer la sélection.</p>
+    <p class="hint">Astuces : double-clic sur un joueur pour le renommer · cliquer sur une ligne pour déplacer tout le bloc · sélectionner un joueur puis cliquer sur un remplaçant pour faire le changement · Espace = lecture · Suppr = supprimer la sélection.</p>
   </aside>
 </main>
 
@@ -91,12 +98,26 @@
       <h2>Compositions de matchs réels</h2>
       <button id="modalClose">✕</button>
     </div>
-    <div class="row">
-      <select id="compSel"></select>
+    <div class="row wrap">
+      <select id="srcSel" title="Source des données">
+        <option value="espn">Matchs récents</option>
+        <option value="sb">Archives StatsBomb</option>
+      </select>
+      <select id="typeSel" title="Type de compétition"><option value="">Tous les types</option></select>
+      <select id="compSel" title="Compétition"></select>
+    </div>
+    <div class="row wrap">
+      <input type="month" id="monthSel" title="Mois">
+      <select id="seasonSel" title="Saison" hidden></select>
       <input id="matchFilter" type="text" placeholder="Filtrer par équipe…">
+      <select id="sortSel" title="Tri">
+        <option value="desc">Plus récents d'abord</option>
+        <option value="asc">Plus anciens d'abord</option>
+        <option value="team">Équipe A → Z</option>
+      </select>
     </div>
     <div id="matchList"></div>
-    <p class="hint">Données : <a href="https://github.com/statsbomb/open-data" target="_blank" rel="noopener">StatsBomb Open Data</a>.</p>
+    <p class="hint">Données : ESPN (matchs récents) et <a href="https://github.com/statsbomb/open-data" target="_blank" rel="noopener">StatsBomb Open Data</a> (archives).</p>
   </div>
 </div>
 

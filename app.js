@@ -48,7 +48,7 @@ function formationPositions(str, team) {
 function newBoard() {
   const s = {
     v: 1, title: '', mode: 'players', nextId: 1,
-    teams: { home: { name: 'Équipe A', color: '#d62839', formation: '4-3-3' }, away: { name: 'Équipe B', color: '#1d5fbf', formation: '4-4-2' } },
+    teams: { home: { name: 'Équipe A', color: '#d62839', formation: '4-3-3', bench: [] }, away: { name: 'Équipe B', color: '#1d5fbf', formation: '4-4-2', bench: [] } },
     tokens: [], frames: [{ pos: {}, drawings: [] }], cur: 0,
   };
   s.tokens.push({ id: s.nextId++, team: 'ball' });
@@ -83,14 +83,14 @@ function snapshot() {
 }
 function undo() {
   if (!undoStack.length) return;
-  state = JSON.parse(undoStack.pop());
+  state = normalize(JSON.parse(undoStack.pop()));
   selection = [];
   syncUI(); render();
 }
 function setState(s) {
   stopPlay();
   snapshot();
-  state = s; selection = [];
+  state = normalize(s); selection = [];
   syncUI(); render();
 }
 
@@ -265,10 +265,12 @@ function syncUI() {
     const tm = state.teams[c.dataset.team];
     c.querySelector('.tName').value = tm.name;
     c.querySelector('.tColor').value = tm.color;
-    c.querySelector('.tForm').value = FORMATIONS.includes(tm.formation) ? tm.formation : FORMATIONS[0];
+    const sel = c.querySelector('.tForm');
+    if (tm.formation && ![...sel.options].some(o => o.value === tm.formation)) sel.add(new Option(tm.formation, tm.formation));
+    sel.value = tm.formation || FORMATIONS[0];
   });
   $('#saveName').value = state.title || '';
-  renderTimeline(); renderSelPanel(); renderSaved();
+  renderTimeline(); renderSelPanel(); renderSaved(); renderBench();
 }
 
 // ---------- Interaction pointeur ----------
@@ -531,7 +533,29 @@ $('#btnPng').onclick = () => {
   img.src = url;
 };
 
-// ---------- Matchs réels (StatsBomb Open Data) ----------
+// ---------- Matchs réels (ESPN pour les matchs récents, StatsBomb Open Data pour les archives) ----------
+const ESPN = 'https://site.api.espn.com/apis/site/v2/sports/soccer/';
+const TYPES = { league: 'Championnats', cup: 'Coupes nationales', club: 'Coupes continentales (clubs)', nat: 'Sélections nationales' };
+const ESPN_COMPS = [
+  ['fra.1', 'Ligue 1 (France)', 'league'], ['fra.2', 'Ligue 2 (France)', 'league'],
+  ['eng.1', 'Premier League (Angleterre)', 'league'], ['eng.2', 'Championship (Angleterre)', 'league'],
+  ['esp.1', 'LaLiga (Espagne)', 'league'], ['ita.1', 'Serie A (Italie)', 'league'], ['ger.1', 'Bundesliga (Allemagne)', 'league'],
+  ['por.1', 'Liga Portugal', 'league'], ['ned.1', 'Eredivisie (Pays-Bas)', 'league'], ['bel.1', 'Pro League (Belgique)', 'league'],
+  ['tur.1', 'Süper Lig (Turquie)', 'league'], ['sco.1', 'Premiership (Écosse)', 'league'], ['ksa.1', 'Saudi Pro League', 'league'],
+  ['usa.1', 'MLS (États-Unis)', 'league'], ['bra.1', 'Brasileirão (Brésil)', 'league'], ['arg.1', 'Liga Profesional (Argentine)', 'league'],
+  ['mex.1', 'Liga MX (Mexique)', 'league'],
+  ['fra.coupe_de_france', 'Coupe de France', 'cup'], ['eng.fa', 'FA Cup (Angleterre)', 'cup'], ['eng.league_cup', 'League Cup (Angleterre)', 'cup'],
+  ['esp.copa_del_rey', 'Copa del Rey (Espagne)', 'cup'], ['ita.coppa_italia', 'Coppa Italia', 'cup'], ['ger.dfb_pokal', 'DFB-Pokal (Allemagne)', 'cup'],
+  ['uefa.champions', 'Ligue des champions UEFA', 'club'], ['uefa.europa', 'Ligue Europa', 'club'], ['uefa.europa.conf', 'Ligue Conférence', 'club'],
+  ['uefa.wchampions', 'Ligue des champions féminine', 'club'], ['conmebol.libertadores', 'Copa Libertadores', 'club'],
+  ['caf.champions', 'Ligue des champions CAF', 'club'], ['fifa.cwc', 'Coupe du monde des clubs', 'club'],
+  ['fifa.world', 'Coupe du monde', 'nat'], ['fifa.wwc', 'Coupe du monde féminine', 'nat'], ['uefa.euro', 'Euro', 'nat'],
+  ['uefa.nations', 'Ligue des nations UEFA', 'nat'], ['caf.nations', "Coupe d'Afrique des nations", 'nat'], ['conmebol.america', 'Copa América', 'nat'],
+  ['fifa.worldq.uefa', 'Qualif. Coupe du monde – Europe', 'nat'], ['fifa.worldq.caf', 'Qualif. Coupe du monde – Afrique', 'nat'],
+  ['fifa.worldq.conmebol', 'Qualif. Coupe du monde – Amérique du Sud', 'nat'], ['fifa.friendly', 'Matchs amicaux internationaux', 'nat'],
+].map(([id, name, type]) => ({ id, name, type }));
+const SB_TYPE = { 'Copa del Rey': 'cup', 'Champions League': 'club', 'UEFA Europa League': 'club' };
+
 // Position StatsBomb -> [profondeur 0-100, largeur 0-100 (0 = côté gauche de l'équipe)]
 const SB_POS = {
   'Goalkeeper': [6, 50],
@@ -542,114 +566,306 @@ const SB_POS = {
   'Right Wing': [62, 88], 'Right Attacking Midfield': [57, 70], 'Center Attacking Midfield': [57, 50], 'Left Attacking Midfield': [57, 30], 'Left Wing': [62, 12],
   'Right Center Forward': [69, 62], 'Center Forward': [71, 50], 'Left Center Forward': [69, 38], 'Secondary Striker': [63, 50], 'Striker': [71, 50],
 };
-let sbMatches = [];
+// Abréviation de poste ESPN (« CD-L », « RB », « AM »…) -> [profondeur, largeur]
+function espnPos(ab) {
+  const [b, side] = (ab || '').toUpperCase().split('-');
+  const D = { G: 6, SW: 13, CD: 17, D: 17, LB: 23, RB: 23, DM: 31, LWB: 33, RWB: 33, WB: 33, CM: 44, M: 44, LM: 47, RM: 47, AM: 57, LW: 64, RW: 64, LF: 66, RF: 66, CF: 70, F: 71, S: 71, ST: 71 };
+  let w = 50;
+  if (side === 'L') w = 33; else if (side === 'R') w = 67;
+  else if (b.length > 1 && b[0] === 'L') w = 13; else if (b.length > 1 && b[0] === 'R') w = 87;
+  return [D[b] ?? 45, w];
+}
 
-async function sbFetch(path) {
-  const r = await fetch(SB + path);
+let sbComps = null;      // compétitions StatsBomb : [{id, name, type, seasons:[{id, name}]}]
+let matches = [];        // matchs affichés : [{date, home, away, hs, as, load}]
+let loadSeq = 0;
+
+async function getJSON(url) {
+  const r = await fetch(url);
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
 }
-function listMsg(t) { $('#matchList').innerHTML = ''; const d = document.createElement('div'); d.className = 'msg'; d.textContent = t; $('#matchList').appendChild(d); }
+function listMsg(t) {
+  const box = $('#matchList'); box.textContent = '';
+  const d = document.createElement('div'); d.className = 'msg'; d.textContent = t; box.appendChild(d);
+}
 
-$('#btnMatches').onclick = async () => {
-  $('#modal').hidden = false;
-  const sel = $('#compSel');
-  if (sel.options.length) return;
-  listMsg('Chargement des compétitions…');
-  try {
-    const comps = await sbFetch('competitions.json');
-    comps.sort((a, b) => a.competition_name.localeCompare(b.competition_name) || b.season_name.localeCompare(a.season_name));
-    comps.forEach(c => sel.add(new Option(`${c.competition_name} — ${c.season_name}${c.competition_gender === 'female' ? ' (F)' : ''}`, `${c.competition_id}/${c.season_id}`)));
-    const def = comps.find(c => c.competition_name === 'FIFA World Cup' && c.season_name === '2022');
-    if (def) sel.value = `${def.competition_id}/${def.season_id}`;
-    loadMatches();
-  } catch (_) { listMsg('Impossible de charger les données (connexion Internet requise).'); }
-};
-$('#modalClose').onclick = () => { $('#modal').hidden = true; };
-$('#modal').onclick = e => { if (e.target.id === 'modal') $('#modal').hidden = true; };
-$('#compSel').onchange = loadMatches;
-$('#matchFilter').oninput = renderMatches;
+function fillComps() {
+  const sel = $('#compSel'), prev = sel.value, type = $('#typeSel').value;
+  const all = ($('#srcSel').value === 'espn' ? ESPN_COMPS : sbComps || []).filter(c => !type || c.type === type);
+  sel.textContent = '';
+  for (const t in TYPES) {
+    const list = all.filter(c => c.type === t).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+    if (!list.length) continue;
+    const og = document.createElement('optgroup'); og.label = TYPES[t];
+    list.forEach(c => og.appendChild(new Option(c.name, c.id)));
+    sel.appendChild(og);
+  }
+  const want = [prev, 'fra.1'].find(v => [...sel.options].some(o => o.value === v));
+  if (want) sel.value = want;
+  onCompChange();
+}
+function onCompChange() {
+  if ($('#srcSel').value === 'sb') {
+    const c = (sbComps || []).find(x => x.id === $('#compSel').value), ss = $('#seasonSel');
+    ss.textContent = '';
+    if (c) c.seasons.forEach(s => ss.add(new Option(s.name, s.id)));
+  }
+  loadMatches();
+}
+async function onSrcChange() {
+  const sb = $('#srcSel').value === 'sb';
+  $('#monthSel').hidden = sb; $('#seasonSel').hidden = !sb;
+  if (sb && !sbComps) {
+    listMsg('Chargement des compétitions…');
+    try {
+      const comps = await getJSON(SB + 'competitions.json'), by = {};
+      comps.forEach(c => {
+        const id = String(c.competition_id);
+        by[id] ||= {
+          id, seasons: [], name: c.competition_name + (c.competition_gender === 'female' && !/women/i.test(c.competition_name) ? ' (F)' : ''),
+          type: SB_TYPE[c.competition_name] || (c.competition_international ? 'nat' : 'league'),
+        };
+        by[id].seasons.push({ id: String(c.season_id), name: c.season_name });
+      });
+      sbComps = Object.values(by);
+      sbComps.forEach(c => c.seasons.sort((a, b) => b.name.localeCompare(a.name)));
+    } catch (_) { listMsg('Impossible de charger les données (connexion Internet requise).'); return; }
+  }
+  fillComps();
+}
 
 async function loadMatches() {
+  const seq = ++loadSeq, comp = $('#compSel').value;
+  if (!comp) { matches = []; listMsg('Aucune compétition pour ce filtre.'); return; }
   listMsg('Chargement des matchs…');
   try {
-    sbMatches = await sbFetch(`matches/${$('#compSel').value}.json`);
-    sbMatches.sort((a, b) => a.match_date.localeCompare(b.match_date));
+    let list;
+    if ($('#srcSel').value === 'espn') {
+      const month = $('#monthSel').value;
+      if (!month) { listMsg('Choisissez un mois.'); return; }
+      const d = await getJSON(`${ESPN}${comp}/scoreboard?dates=${month.replace('-', '')}&limit=300`);
+      list = (d.events || []).filter(e => e.status.type.state !== 'pre').map(e => {
+        const cs = e.competitions[0].competitors;
+        const h = cs.find(x => x.homeAway === 'home') || cs[0], a = cs.find(x => x.homeAway === 'away') || cs[1];
+        const m = { date: e.date.slice(0, 10), home: h.team.displayName, away: a.team.displayName, hs: h.score, as: a.score };
+        m.load = () => loadEspn(comp, e.id, m, h.team, a.team);
+        return m;
+      });
+    } else {
+      const d = await getJSON(`${SB}matches/${comp}/${$('#seasonSel').value}.json`);
+      list = d.map(x => {
+        const m = { date: x.match_date, home: x.home_team.home_team_name, away: x.away_team.away_team_name, hs: x.home_score, as: x.away_score };
+        m.load = () => loadStatsBomb(x.match_id, m);
+        return m;
+      });
+    }
+    if (seq !== loadSeq) return;
+    matches = list;
     renderMatches();
-  } catch (_) { listMsg('Impossible de charger les matchs.'); }
+  } catch (_) {
+    if (seq === loadSeq) { matches = []; listMsg('Aucun match disponible pour cette sélection.'); }
+  }
 }
+
 function renderMatches() {
-  const q = $('#matchFilter').value.trim().toLowerCase();
-  const list = sbMatches.filter(m => !q || (m.home_team.home_team_name + ' ' + m.away_team.away_team_name).toLowerCase().includes(q));
-  if (!list.length) { listMsg('Aucun match.'); return; }
+  const q = $('#matchFilter').value.trim().toLowerCase(), sort = $('#sortSel').value;
+  const list = matches.filter(m => !q || (m.home + ' ' + m.away).toLowerCase().includes(q));
+  list.sort(sort === 'team' ? (a, b) => a.home.localeCompare(b.home, 'fr') || a.date.localeCompare(b.date)
+    : sort === 'asc' ? (a, b) => a.date.localeCompare(b.date) : (a, b) => b.date.localeCompare(a.date));
+  if (!list.length) { listMsg(matches.length ? 'Aucun match pour ce filtre.' : 'Aucun match joué sur cette période.'); return; }
   const box = $('#matchList'); box.textContent = '';
   list.forEach(m => {
     const b = document.createElement('button');
-    const d = document.createElement('span'); d.className = 'd'; d.textContent = m.match_date;
+    const d = document.createElement('span'); d.className = 'd'; d.textContent = m.date;
     const t = document.createElement('span');
-    const s = document.createElement('span'); s.className = 's'; s.textContent = `${m.home_score} – ${m.away_score}`;
-    t.append(m.home_team.home_team_name + ' ', s, ' ' + m.away_team.away_team_name);
+    const s = document.createElement('span'); s.className = 's'; s.textContent = `${m.hs} – ${m.as}`;
+    t.append(m.home + ' ', s, ' ' + m.away);
     b.append(d, t);
-    b.onclick = () => loadMatch(m, b);
+    b.onclick = async () => {
+      b.disabled = true;
+      try { setState(await m.load()); $('#modal').hidden = true; }
+      catch (_) { alert('Composition indisponible pour ce match.'); }
+      b.disabled = false;
+    };
     box.appendChild(b);
   });
 }
 
-function shortName(p) {
-  const parts = (p.player_nickname || p.player_name || '').trim().split(/\s+/);
+function lastName(full) {
+  const parts = (full || '').trim().split(/\s+/);
   let i = parts.length - 1;
   while (i > 0 && /^(de|di|da|dos|del|van|der|den|von|ter|el|al|le|la|mac)$/i.test(parts[i - 1])) i--;
   return parts.slice(i).join(' ');
 }
 
-async function loadMatch(m, btn) {
-  btn.disabled = true;
+// teams : {home, away} avec {name, color?, formation?, starters:[{number, name, d, w}], bench:[{number, name, in}]}
+function buildBoard(m, teams) {
+  const s = newBoard(), keep = state;
+  s.title = `${m.home} ${m.hs}-${m.as} ${m.away} (${m.date})`;
+  state = s;                       // addToken travaille sur l'état courant
   try {
-    const lineups = await sbFetch(`lineups/${m.match_id}.json`);
-    const s = newBoard();
-    const keep = state; state = s;
-    try {
-      s.title = `${m.home_team.home_team_name} ${m.home_score}-${m.away_score} ${m.away_team.away_team_name} (${m.match_date})`;
-      for (const team of ['home', 'away']) {
-        const name = m[team + '_team'][team + '_team_name'];
-        const lu = lineups.find(l => l.team_name === name) || lineups[team === 'home' ? 0 : 1];
-        s.teams[team].name = name;
-        const starters = lu.lineup
-          .map(p => ({ p, pos: (p.positions || []).find(x => x.start_reason === 'Starting XI') }))
-          .filter(x => x.pos);
-        if (starters.length) {
-          const used = {};
-          starters.forEach(({ p, pos }) => {
-            let [d, w] = SB_POS[pos.position] || [45, 50];
-            const key = d + ':' + w;                 // évite les superpositions
-            if (used[key]) w += 8 * used[key];
-            used[key] = (used[key] || 0) + 1;
-            let x = d * 0.66 / 100 * W, y = w / 100 * H;
-            if (team === 'away') { x = W - x; y = H - y; }
-            const line = pos.position === 'Goalkeeper' ? 0 : d < 28 ? 1 : d < 40 ? 2 : d < 52 ? 3 : d < 60 ? 4 : 5;
-            addToken(team, x, y, { number: String(p.jersey_number ?? ''), name: shortName(p), line });
-          });
-          s.teams[team].formation = '';
-        } else {
-          // anciennes données sans positions : 11 premiers joueurs en 4-4-2
-          applyFormation(team, '4-4-2');
-          const toks = s.tokens.filter(t => t.team === team);
-          lu.lineup.slice(0, 11).forEach((p, i) => { toks[i].number = String(p.jersey_number ?? ''); toks[i].name = shortName(p); });
-        }
+    for (const side of ['home', 'away']) {
+      const t = teams[side], tm = s.teams[side];
+      tm.name = t.name; tm.bench = t.bench; tm.formation = '';
+      if (t.color) tm.color = t.color;
+      const st = [...t.starters].sort((a, b) => a.d - b.d);
+      const parts = (t.formation || '').split('-').map(Number);
+      const put = (p, x, y, line) => addToken(side, x, y, { number: p.number, name: p.name, line });
+      if (parts.length > 1 && parts.every(n => n > 0 && n < 7) && parts.reduce((a, b) => a + b, 0) === st.length - 1) {
+        const slots = formationPositions(t.formation, side);
+        put(st[0], slots[0].x, slots[0].y, 0);
+        let k = 1;
+        parts.forEach(n => {
+          st.slice(k, k + n).sort((a, b) => a.w - b.w).forEach((p, j) => put(p, slots[k + j].x, slots[k + j].y, slots[k + j].line));
+          k += n;
+        });
+        tm.formation = t.formation;
+      } else {
+        const used = {};
+        st.forEach(p => {
+          let w = p.w; const key = p.d + ':' + p.w;
+          if (used[key]) w += 8 * used[key];           // évite les superpositions
+          used[key] = (used[key] || 0) + 1;
+          let x = p.d * 0.66 / 100 * W, y = w / 100 * H;
+          if (side === 'away') { x = W - x; y = H - y; }
+          put(p, x, y, p.d < 10 ? 0 : p.d < 28 ? 1 : p.d < 40 ? 2 : p.d < 52 ? 3 : p.d < 60 ? 4 : 5);
+        });
       }
-    } finally { state = keep; }
-    setState(s);
-    $('#modal').hidden = true;
-  } catch (_) {
-    alert('Impossible de charger la composition de ce match.');
-  }
-  btn.disabled = false;
+    }
+  } finally { state = keep; }
+  return s;
 }
+
+async function loadStatsBomb(id, m) {
+  const lineups = await getJSON(`${SB}lineups/${id}.json`), teams = {};
+  ['home', 'away'].forEach((side, i) => {
+    const lu = lineups.find(l => l.team_name === m[side]) || lineups[i];
+    const pl = lu.lineup.map(p => ({
+      number: String(p.jersey_number ?? ''), name: lastName(p.player_nickname || p.player_name),
+      pos: (p.positions || []).find(x => x.start_reason === 'Starting XI'), played: (p.positions || []).length > 0,
+    }));
+    const t = teams[side] = { name: m[side] };
+    if (pl.some(p => p.pos)) {
+      t.starters = pl.filter(p => p.pos).map(p => { const [d, w] = SB_POS[p.pos.position] || [45, 50]; return { ...p, d, w }; });
+      t.bench = pl.filter(p => !p.pos).map(p => ({ number: p.number, name: p.name, in: p.played }));
+    } else {                       // anciennes données sans postes : 11 premiers en 4-4-2
+      t.formation = '4-4-2';
+      t.starters = pl.slice(0, 11).map((p, k) => ({ ...p, d: k, w: k }));
+      t.bench = pl.slice(11).map(p => ({ number: p.number, name: p.name }));
+    }
+  });
+  return buildBoard(m, teams);
+}
+
+function hexColor(c) { return /^[0-9a-f]{6}$/i.test(c || '') ? '#' + c.toLowerCase() : null; }
+function colorDist(a, b) {
+  const p = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const [x, y] = [p(a), p(b)];
+  return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+}
+async function loadEspn(comp, id, m, hTeam, aTeam) {
+  const d = await getJSON(`${ESPN}${comp}/summary?event=${id}`), teams = {};
+  const rosters = d.rosters || [];
+  ['home', 'away'].forEach((side, i) => {
+    const r = rosters.find(x => x.homeAway === side) || rosters[i];
+    const pl = (r && r.roster) || [];
+    if (!pl.some(p => p.starter)) throw new Error('no lineup');
+    const conv = p => ({ number: String(p.jersey ?? ''), name: p.athlete.lastName || lastName(p.athlete.displayName) });
+    teams[side] = {
+      name: m[side], formation: r.formation,
+      starters: pl.filter(p => p.starter).map(p => { const [dd, w] = espnPos(p.position && p.position.abbreviation); return { ...conv(p), d: dd, w }; }),
+      bench: pl.filter(p => !p.starter).map(p => ({ ...conv(p), in: !!p.subbedIn })),
+    };
+  });
+  const hc = hexColor(hTeam.color) || '#d62839';
+  let ac = [hexColor(aTeam.color), hexColor(aTeam.alternateColor), '#1d5fbf', '#f2c400'].find(c => c && colorDist(c, hc) > 110);
+  teams.home.color = hc; teams.away.color = ac;
+  return buildBoard(m, teams);
+}
+
+$('#btnMatches').onclick = () => {
+  $('#modal').hidden = false;
+  if (!$('#compSel').options.length) onSrcChange();
+};
+$('#modalClose').onclick = () => { $('#modal').hidden = true; };
+$('#modal').onclick = e => { if (e.target.id === 'modal') $('#modal').hidden = true; };
+$('#srcSel').onchange = onSrcChange;
+$('#typeSel').onchange = fillComps;
+$('#compSel').onchange = onCompChange;
+$('#monthSel').onchange = loadMatches;
+$('#seasonSel').onchange = loadMatches;
+$('#matchFilter').oninput = renderMatches;
+$('#sortSel').onchange = renderMatches;
+for (const t in TYPES) $('#typeSel').add(new Option(TYPES[t], t));
+{
+  const now = new Date(), ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  $('#monthSel').value = ym; $('#monthSel').max = ym;
+}
+
+// ---------- Remplaçants ----------
+function normalize(s) {
+  for (const k of ['home', 'away']) s.teams[k].bench ||= [];
+  return s;
+}
+function renderBench() {
+  $$('.team').forEach(c => {
+    const team = c.dataset.team, bench = state.teams[team].bench, box = c.querySelector('.bench');
+    c.querySelector('.benchTitle').textContent = `Remplaçants (${bench.length})`;
+    box.textContent = '';
+    bench.forEach((p, i) => {
+      const chip = document.createElement('div'); chip.className = 'chip';
+      const main = document.createElement('button');
+      main.textContent = `${p.number || ''} ${p.name || '—'}${p.in ? ' ▲' : ''}`.trim();
+      main.title = (p.in ? 'Entré en jeu pendant le match. ' : '') + 'Cliquer : remplace le joueur sélectionné, ou entre sur le terrain';
+      main.onclick = () => benchClick(team, i);
+      const del = document.createElement('button'); del.textContent = '✕'; del.title = 'Retirer du banc';
+      del.onclick = () => { snapshot(); bench.splice(i, 1); renderBench(); autosave(); };
+      chip.append(main, del); box.appendChild(chip);
+    });
+  });
+}
+function benchClick(team, i) {
+  stopPlay(); snapshot();
+  const bench = state.teams[team].bench, b = bench[i];
+  const t = selection.length === 1 ? selTok() : null;
+  if (t && t.team === team) {                      // changement : le remplaçant prend la place du joueur sélectionné
+    bench[i] = { number: t.number, name: t.name };
+    t.number = b.number; t.name = b.name;
+  } else {                                         // sinon il entre sur le terrain
+    bench.splice(i, 1);
+    const n = state.tokens.filter(x => x.team === team).length;
+    const tk = addToken(team, W / 2 + (team === 'home' ? -1 : 1) * (5 + (n % 6) * 4), H - 3, { number: b.number, name: b.name });
+    selection = [tk.id];
+  }
+  renderBench(); renderSelPanel(); render();
+}
+$('#selBench').onclick = () => {
+  const t = selTok();
+  if (!t || t.team === 'ball') return;
+  snapshot();
+  state.teams[t.team].bench.push({ number: t.number, name: t.name });
+  state.tokens = state.tokens.filter(x => x !== t);
+  state.frames.forEach(f => delete f.pos[t.id]);
+  selection = []; renderBench(); renderSelPanel(); render();
+};
+$$('.team').forEach(c => {
+  c.querySelector('.tAddSub').onclick = () => {
+    const team = c.dataset.team;
+    const name = prompt('Nom du remplaçant :');
+    if (name === null) return;
+    snapshot();
+    const n = state.tokens.filter(t => t.team === team).length + state.teams[team].bench.length + 1;
+    state.teams[team].bench.push({ number: String(n), name: name.trim() });
+    renderBench(); autosave();
+  };
+});
 
 // ---------- Démarrage ----------
 drawPitch();
 try { state = JSON.parse(localStorage.getItem('tb.current')); } catch (_) {}
-if (!state || !state.frames || !state.tokens) {
+if (state && state.frames && state.tokens) normalize(state);
+else {
   state = newBoard();
   applyFormation('home', '4-3-3');
   applyFormation('away', '4-4-2');

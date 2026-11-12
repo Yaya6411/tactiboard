@@ -16,7 +16,7 @@ h3 { font-size: 12px; margin: 0 0 8px; text-transform: uppercase; letter-spacing
 .bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .sep { width: 1px; height: 22px; background: #2f3b48; margin: 0 4px; }
 
-button, select, input[type=text] {
+button, select, input[type=text], input[type=month] {
   font: inherit; color: inherit; background: #25303b; border: 1px solid #34424f;
   border-radius: 6px; padding: 6px 10px;
 }
@@ -25,7 +25,8 @@ button:hover { background: #2e3b48; }
 button.primary { background: #2f9e5b; border-color: #2f9e5b; color: #fff; font-weight: 600; }
 button.primary:hover { background: #37b368; }
 button.danger { background: #7a2630; border-color: #94303b; }
-input[type=text], select { min-width: 0; width: 100%; }
+input[type=text], input[type=month], select { min-width: 0; width: 100%; }
+input[type=month] { color-scheme: dark; }
 input[type=color] { width: 36px; height: 32px; padding: 0; border: 1px solid #34424f; border-radius: 6px; background: none; flex: none; cursor: pointer; }
 
 .seg input { display: none; }
@@ -86,3 +87,13 @@ main { flex: 1; display: flex; min-height: 0; }
   #pitch { flex: none; aspect-ratio: 113 / 76; }
   #panel { width: auto; border-left: 0; overflow: visible; }
 }
+
+.row.wrap { flex-wrap: wrap; }
+#modal .row.wrap > * { flex: 1 1 150px; width: auto; }
+.benchTitle { margin: 6px 0 0; }
+.bench { display: flex; flex-wrap: wrap; gap: 4px; }
+.bench:empty::after { content: "Aucun remplaçant"; font-size: 12px; color: #6f8194; }
+.chip { display: flex; }
+.chip button { padding: 3px 7px; font-size: 12px; }
+.chip button:first-child { border-radius: 6px 0 0 6px; }
+.chip button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; color: #8fa1b3; padding: 3px 5px; }
