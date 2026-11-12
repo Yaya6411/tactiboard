@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TactiBoard — Palette tactique football</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>⚽ TactiBoard</h1>
+  <div class="bar">
+    <button id="btnNew" title="Nouvelle palette">Nouvelle</button>
+    <button id="btnMatches" class="primary">Matchs réels</button>
+    <span class="sep"></span>
+    <label class="seg"><input type="radio" name="mode" value="players" checked><span>Joueurs</span></label>
+    <label class="seg"><input type="radio" name="mode" value="dots"><span>Points</span></label>
+    <span class="sep"></span>
+    <button id="btnUndo" title="Annuler (Ctrl+Z)">↶ Annuler</button>
+    <button id="btnPng">Export PNG</button>
+    <button id="btnExport">Export JSON</button>
+    <button id="btnImport">Import JSON</button>
+    <input type="file" id="fileImport" accept=".json" hidden>
+  </div>
+</header>
+
+<main>
+  <aside id="tools">
+    <button data-tool="select" class="on" title="Sélectionner / déplacer (glisser dans le vide = sélection multiple)">↖<small>Sélection</small></button>
+    <button data-tool="arrow" title="Flèche de course">➜<small>Course</small></button>
+    <button data-tool="pass" title="Flèche de passe (pointillés)">⇢<small>Passe</small></button>
+    <button data-tool="line" title="Ligne droite">／<small>Ligne</small></button>
+    <button data-tool="zone" title="Zone rectangulaire">▭<small>Zone</small></button>
+    <button data-tool="free" title="Tracé libre avec flèche">✎<small>Libre</small></button>
+    <button data-tool="erase" title="Gomme : cliquer sur un dessin">⌫<small>Gomme</small></button>
+    <input type="color" id="drawColor" value="#ffd60a" title="Couleur des dessins">
+    <button id="btnClearDraw" title="Effacer tous les dessins de l'étape">🗑<small>Dessins</small></button>
+  </aside>
+
+  <section id="stage">
+    <svg id="pitch" viewBox="-4 -4 113 76" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="timeline">
+      <button id="btnPlay" class="primary">▶ Lecture</button>
+      <div id="frames"></div>
+      <button id="btnAddFrame" title="Dupliquer l'étape courante pour y déplacer les joueurs">+ Étape</button>
+      <button id="btnDelFrame" title="Supprimer l'étape courante">− Étape</button>
+      <label>Vitesse <input type="range" id="speed" min="0.4" max="3" step="0.1" value="1"></label>
+      <label><input type="checkbox" id="loop"> Boucle</label>
+      <label><input type="checkbox" id="trails" checked> Trajectoires</label>
+      <label><input type="checkbox" id="showLines" checked> Lignes</label>
+    </div>
+  </section>
+
+  <aside id="panel">
+    <div class="card" id="selCard" hidden>
+      <h3>Joueur sélectionné</h3>
+      <label>Nom <input id="selName" type="text"></label>
+      <label>Numéro <input id="selNum" type="text" maxlength="3"></label>
+      <button id="selDel" class="danger">Supprimer</button>
+    </div>
+    <div class="card team" data-team="home">
+      <h3>Équipe 1</h3>
+      <div class="row"><input class="tName" type="text"><input class="tColor" type="color"></div>
+      <div class="row">
+        <select class="tForm"></select>
+        <button class="tApply">Appliquer</button>
+      </div>
+      <button class="tAdd">+ Ajouter un joueur</button>
+    </div>
+    <div class="card team" data-team="away">
+      <h3>Équipe 2</h3>
+      <div class="row"><input class="tName" type="text"><input class="tColor" type="color"></div>
+      <div class="row">
+        <select class="tForm"></select>
+        <button class="tApply">Appliquer</button>
+      </div>
+      <button class="tAdd">+ Ajouter un joueur</button>
+    </div>
+    <div class="card">
+      <h3>Mes palettes</h3>
+      <div class="row"><input id="saveName" type="text" placeholder="Nom de la palette"><button id="btnSave">Enregistrer</button></div>
+      <ul id="savedList"></ul>
+    </div>
+    <p class="hint">Astuces : double-clic sur un joueur pour le renommer · cliquer sur une ligne pour déplacer tout le bloc · Espace = lecture · Suppr = supprimer la sélection.</p>
+  </aside>
+</main>
+
+<div id="modal" hidden>
+  <div class="box">
+    <div class="row head">
+      <h2>Compositions de matchs réels</h2>
+      <button id="modalClose">✕</button>
+    </div>
+    <div class="row">
+      <select id="compSel"></select>
+      <input id="matchFilter" type="text" placeholder="Filtrer par équipe…">
+    </div>
+    <div id="matchList"></div>
+    <p class="hint">Données : <a href="https://github.com/statsbomb/open-data" target="_blank" rel="noopener">StatsBomb Open Data</a>.</p>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
