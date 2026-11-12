@@ -96,7 +96,8 @@ function setState(s) {
 
 // ---------- Terrain (statique) ----------
 function drawPitch() {
-  const g = el('g', { id: 'gPitch' }, svg);
+  const view = el('g', { id: 'gView' }, svg);
+  const g = el('g', { id: 'gPitch' }, view);
   el('rect', { x: -4, y: -4, width: 113, height: 76, fill: '#2c7a43' }, g);
   for (let i = 0; i < 10; i++) {
     if (i % 2 === 0) el('rect', { x: i * W / 10, y: 0, width: W / 10, height: H, fill: '#338a4c' }, g);
@@ -114,7 +115,28 @@ function drawPitch() {
     el('circle', { cx: fx(11), cy: H / 2, r: 0.4, fill: '#fff' }, g);
     el('path', { d: `M ${fx(16.5)} ${H / 2 - 7.31} A 9.15 9.15 0 0 ${s ? 0 : 1} ${fx(16.5)} ${H / 2 + 7.31}`, ...L }, g);
   }
-  el('g', { id: 'gDyn' }, svg);
+  el('g', { id: 'gDyn' }, view);
+}
+
+// ---------- Vue : terrain entier ou demi-terrain (pivoté, but en haut) ----------
+const VIEWS = { full: ['-4 -4 113 76', 0], right: ['-4 -109 76 60.5', -90], left: ['-72 -4 76 60.5', 90] };   // [viewBox, rotation]
+const viewOf = () => VIEWS[state.view] || VIEWS.full;
+function applyView() {
+  const [vb, rot] = viewOf();
+  svg.setAttribute('viewBox', vb);
+  $('#gView').setAttribute('transform', `rotate(${rot})`);
+  svg.style.aspectRatio = vb.split(' ').slice(2).join(' / ');
+  $('#viewSel').value = VIEWS[state.view] ? state.view : 'full';
+}
+// Abscisse d'entrée d'un nouveau joueur, toujours dans la partie visible du terrain
+function spawnX(team, n) {
+  const cx = state.view === 'right' ? 63 : state.view === 'left' ? 42 : W / 2;
+  return cx + (team === 'home' ? -1 : 1) * (3 + (n % 3) * 3);
+}
+// Taille d'export en pixels (hauteur paire) pour une largeur donnée
+function exportSize(w) {
+  const [, , vw, vh] = viewOf()[0].split(' ').map(Number);
+  return [w, 2 * Math.round(w * vh / vw / 2)];
 }
 
 // ---------- Rendu dynamique ----------
@@ -334,7 +356,7 @@ function render() {
   const order = [...state.tokens].sort((a, b) => (a.team === 'ball') - (b.team === 'ball'));
   for (const t of order) {
     const p = pos[t.id];
-    const tg = el('g', { 'data-id': t.id, transform: `translate(${r2(p.x)} ${r2(p.y)})`, style: 'cursor:grab' }, g);
+    const tg = el('g', { 'data-id': t.id, transform: `translate(${r2(p.x)} ${r2(p.y)}) rotate(${-viewOf()[1]})`, style: 'cursor:grab' }, g);
     const sel = selection.includes(t.id) && !render.hideSel;
     if (t.team === 'ball') {
       if (sel) el('circle', { r: 1.5, fill: 'none', stroke: '#ffd60a', 'stroke-width': 0.3 }, tg);
@@ -400,14 +422,14 @@ function syncUI() {
     sel.value = tm.formation || FORMATIONS[0];
   });
   $('#saveName').value = state.title || '';
-  renderTimeline(); renderSelPanel(); renderSaved(); renderBench();
+  applyView(); renderTimeline(); renderSelPanel(); renderSaved(); renderBench();
 }
 
 // ---------- Interaction pointeur ----------
 function svgPoint(e) {
   const pt = svg.createSVGPoint();
   pt.x = e.clientX; pt.y = e.clientY;
-  const q = pt.matrixTransform(svg.getScreenCTM().inverse());
+  const q = pt.matrixTransform($('#gView').getScreenCTM().inverse());
   return [clamp(q.x, -3, W + 3), clamp(q.y, -3, H + 3)];
 }
 
@@ -571,6 +593,7 @@ $('#btnDelFrame').onclick = () => {
 ['trails', 'showLines'].forEach(id => $('#' + id).onchange = render);
 $$('input[name=mode]').forEach(r => r.onchange = () => { state.mode = r.value; render(); });
 $('#btnUndo').onclick = undo;
+$('#viewSel').onchange = e => { stopPlay(); state.view = e.target.value; applyView(); render(); };
 $('#btnNew').onclick = () => {
   const s = newBoard();
   const keep = state; state = s;
@@ -588,7 +611,7 @@ $$('.team').forEach(c => {
   c.querySelector('.tAdd').onclick = () => {
     stopPlay(); snapshot();
     const n = state.tokens.filter(t => t.team === team).length + 1;
-    const t = addToken(team, team === 'home' ? W / 2 - 6 : W / 2 + 6, H - 4, { number: String(n) });
+    const t = addToken(team, spawnX(team, n), H - 4, { number: String(n) });
     selection = [t.id]; renderSelPanel(); render();
   };
 });
@@ -668,13 +691,14 @@ $('#btnPng').onclick = () => {
   stopPlay();
   render.hideSel = true; render(); render.hideSel = false;
   const clone = svg.cloneNode(true);
-  clone.setAttribute('width', 2260); clone.setAttribute('height', 1520);
+  const [pw, ph] = exportSize(2260);
+  clone.setAttribute('width', pw); clone.setAttribute('height', ph);
   const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(clone));
   render();
   const img = new Image();
   img.onload = () => {
     const c = document.createElement('canvas');
-    c.width = 2260; c.height = 1520;
+    c.width = pw; c.height = ph;
     c.getContext('2d').drawImage(img, 0, 0);
     c.toBlob(b => download(b, fileBase() + '.png'));
   };
@@ -690,7 +714,7 @@ async function exportVideo() {
   const mime = window.MediaRecorder && HTMLCanvasElement.prototype.captureStream
     && ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m));
   if (!mime) { alert('Ce navigateur ne permet pas l\'export vidéo. Essayez avec Chrome, Edge ou Firefox.'); return; }
-  const VW = 1280, VH = 860;
+  const [VW, VH] = exportSize(1280);
   const canvas = document.createElement('canvas');
   canvas.width = VW; canvas.height = VH;
   const ctx = canvas.getContext('2d');
@@ -1080,7 +1104,7 @@ function benchClick(team, i) {
   } else {                                         // sinon il entre sur le terrain
     bench.splice(i, 1);
     const n = state.tokens.filter(x => x.team === team).length;
-    const tk = addToken(team, W / 2 + (team === 'home' ? -1 : 1) * (5 + (n % 6) * 4), H - 3, { number: b.number, name: b.name });
+    const tk = addToken(team, spawnX(team, n), H - 3, { number: b.number, name: b.name });
     selection = [tk.id];
   }
   renderBench(); renderSelPanel(); render();
