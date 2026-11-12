@@ -642,6 +642,63 @@ $('#btnPng').onclick = () => {
   img.src = url;
 };
 
+// ---------- Export vidéo ----------
+// Rejoue l'animation image par image sur un canvas, enregistré en temps réel par MediaRecorder
+async function exportVideo() {
+  stopPlay();
+  const n = state.frames.length, end = n - 1 + (hasMoves(n - 1) ? 1 : 0);
+  if (!end) { alert('Il n\'y a pas encore d\'animation à exporter : tracez des flèches depuis des joueurs ou le ballon, ou ajoutez une étape.'); return; }
+  const mime = window.MediaRecorder && HTMLCanvasElement.prototype.captureStream
+    && ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m));
+  if (!mime) { alert('Ce navigateur ne permet pas l\'export vidéo. Essayez avec Chrome, Edge ou Firefox.'); return; }
+  const VW = 1280, VH = 860;
+  const canvas = document.createElement('canvas');
+  canvas.width = VW; canvas.height = VH;
+  const ctx = canvas.getContext('2d');
+  const paint = async () => {
+    render();
+    const clone = svg.cloneNode(true);
+    clone.setAttribute('width', VW); clone.setAttribute('height', VH);
+    const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' }));
+    const img = new Image();
+    try {
+      await new Promise((ok, ko) => { img.onload = ok; img.onerror = ko; img.src = url; });
+      ctx.drawImage(img, 0, 0, VW, VH);
+    } finally { URL.revokeObjectURL(url); }
+  };
+  const rec = new MediaRecorder(canvas.captureStream(30), { mimeType: mime, videoBitsPerSecond: 6e6 });
+  const chunks = [];
+  rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  const stopped = new Promise(ok => { rec.onstop = ok; });
+  const dur = end * 1500 / +$('#speed').value, hold = 700;      // pause au début et à la fin
+  const busy = $('#busy');
+  selection = []; renderSelPanel();
+  busy.hidden = false;
+  play = { t: 0, end, last: null };
+  try {
+    await paint();
+    rec.start();
+    const t0 = performance.now();
+    for (;;) {
+      const el = performance.now() - t0;
+      play.t = clamp((el - hold) / dur, 0, 1) * end;
+      busy.firstElementChild.textContent = `Création de la vidéo… ${Math.min(100, Math.round(el / (dur + 2 * hold) * 100))} %`;
+      await paint();
+      if (el >= dur + 2 * hold) break;
+      await new Promise(ok => setTimeout(ok, Math.max(0, 33 - (performance.now() - t0 - el))));
+    }
+    rec.stop();
+    await stopped;
+    download(new Blob(chunks, { type: mime.split(';')[0] }), fileBase() + (mime.startsWith('video/mp4') ? '.mp4' : '.webm'));
+  } catch (_) {
+    alert('La création de la vidéo a échoué.');
+  } finally {
+    play = null; busy.hidden = true;
+    renderTimeline(); render();
+  }
+}
+$('#btnVideo').onclick = exportVideo;
+
 // ---------- Matchs réels (ESPN pour les matchs récents, StatsBomb Open Data pour les archives) ----------
 const ESPN = 'https://site.api.espn.com/apis/site/v2/sports/soccer/';
 const TYPES = { league: 'Championnats', cup: 'Coupes nationales', club: 'Coupes continentales (clubs)', nat: 'Sélections nationales' };

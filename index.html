@@ -18,6 +18,7 @@
     <span class="sep"></span>
     <button id="btnUndo" title="Annuler (Ctrl+Z)">↶ Annuler</button>
     <button id="btnPng">Export PNG</button>
+    <button id="btnVideo" title="Exporter l'animation en vidéo">Export vidéo</button>
     <button id="btnExport">Export JSON</button>
     <button id="btnImport">Import JSON</button>
     <input type="file" id="fileImport" accept=".json" hidden>
@@ -121,6 +122,8 @@
     <p class="hint">Données : ESPN (matchs récents) et <a href="https://github.com/statsbomb/open-data" target="_blank" rel="noopener">StatsBomb Open Data</a> (archives).</p>
   </div>
 </div>
+
+<div id="busy" hidden><div>Création de la vidéo…</div></div>
 
 <script src="app.js"></script>
 </body>

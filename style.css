@@ -99,3 +99,5 @@ main { flex: 1; display: flex; min-height: 0; }
 .chip button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; color: #8fa1b3; padding: 3px 5px; }
 #matchList .tag { margin-left: auto; font-size: 11px; padding: 1px 7px; border-radius: 10px; white-space: nowrap; background: #34424f; color: #cfd9e3; }
 #matchList .tag.in { background: #b3261e; color: #fff; }
+#busy { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.65); display: flex; align-items: center; justify-content: center; }
+#busy div { background: #1a222b; border: 1px solid #34424f; border-radius: 10px; padding: 18px 26px; font-size: 16px; font-weight: 600; }
