@@ -69,21 +69,9 @@
     </div>
     <div class="card" id="heatCard" hidden>
       <h3>Heat map</h3>
+      <div class="row" id="heatRow"><select id="heatSel" title="Joueur"></select><button id="heatShow" class="primary">Afficher</button></div>
       <p class="hint" id="heatLbl"></p>
-      <button id="heatHide">Masquer la heat map</button>
-    </div>
-    <div class="card" id="minCard" hidden>
-      <h3>Minute du match</h3>
-      <div class="row"><input type="range" id="minRange" min="0" max="120" value="0"><b id="minLbl">0'</b></div>
-      <label id="winRow">Période prise en compte
-        <select id="minWin">
-          <option value="2">± 2 minutes</option>
-          <option value="5" selected>± 5 minutes</option>
-          <option value="10">± 10 minutes</option>
-        </select>
-      </label>
-      <button id="minApply" class="primary">Afficher cette minute</button>
-      <p class="hint" id="minHint"></p>
+      <button id="heatHide" hidden>Masquer la heat map</button>
     </div>
     <div class="card team" data-team="home">
       <h3>Équipe 1</h3>

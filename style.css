@@ -102,5 +102,3 @@ main { flex: 1; display: flex; min-height: 0; }
 #busy { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.65); display: flex; align-items: center; justify-content: center; }
 #busy div { background: #1a222b; border: 1px solid #34424f; border-radius: 10px; padding: 18px 26px; font-size: 16px; font-weight: 600; }
 #viewSel { width: auto; }
-#minRange { flex: 1; min-width: 0; }
-#minLbl { width: 40px; text-align: right; }

@@ -325,7 +325,7 @@ function render() {
   // heat map du joueur choisi, sous tout le reste
   if (heat) {
     const hg = el('g', { filter: 'url(#heatBlur)', 'pointer-events': 'none' }, g);
-    heat.cells.forEach(([x, y, w, h, v]) => el('rect', { x, y, width: w, height: h, fill: `hsl(${Math.round(60 - 60 * v)} 100% 50%)`, 'fill-opacity': r2(0.2 + 0.65 * v) }, hg));
+    heat.cells.forEach(([x, y, w, h, v]) => el('rect', { x, y, width: w, height: h, fill: `rgb(255,${Math.round(255 * (1 - v))},0)`, 'fill-opacity': r2(0.2 + 0.65 * v) }, hg));
   }
 
   // zones d'abord (sous les joueurs), puis autres dessins
@@ -431,7 +431,7 @@ function syncUI() {
     sel.value = tm.formation || FORMATIONS[0];
   });
   $('#saveName').value = state.title || '';
-  applyView(); renderTimeline(); renderSelPanel(); renderSaved(); renderBench(); renderMinute(); renderHeatCard();
+  applyView(); renderTimeline(); renderSelPanel(); renderSaved(); renderBench(); renderHeatCard();
 }
 
 // ---------- Interaction pointeur ----------
@@ -1128,47 +1128,43 @@ async function showHeat(tok) {
   heat = { pid: tok.pid, name: tok.name || tok.number, n, cells };
 }
 function renderHeatCard() {
-  $('#heatCard').hidden = !heat;
-  if (heat) $('#heatLbl').textContent = heat.n ? `${heat.name} : ${heat.n} actions sur l'ensemble du match (du jaune, peu présent, au rouge, très présent).` : `${heat.name} : aucune action enregistrée dans ce match.`;
+  const mt = state.match, sb = mt && mt.src === 'sb';
+  $('#heatCard').hidden = !mt;
+  if (!mt) return;
+  $('#heatRow').hidden = !sb;
+  $('#heatHide').hidden = !heat;
+  if (sb) {
+    const sel = $('#heatSel'), prev = heat ? heat.key : sel.value;
+    sel.textContent = '';
+    for (const side of ['home', 'away']) {
+      const og = document.createElement('optgroup'); og.label = state.teams[side].name;
+      const add = (p, sub) => { if (p.pid) og.appendChild(new Option(`${p.number || ''} ${p.name || ''}${sub ? ' (remplaçant)' : ''}`.trim(), side + ':' + p.pid)); };
+      state.tokens.filter(t => t.team === side).forEach(t => add(t, false));
+      state.teams[side].bench.forEach(b => add(b, true));
+      if (og.children.length) sel.appendChild(og);
+    }
+    if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+  }
+  $('#heatLbl').textContent = !sb ? "Indisponible pour ce match : les matchs récents (ESPN) ne fournissent pas la position des joueurs. Choisissez un match dans « Matchs réels » → source « Archives StatsBomb »."
+    : !heat ? "Choisissez un joueur puis « Afficher » : les zones où il a agi pendant le match se colorent sur le terrain."
+    : heat.n ? `${heat.name} : ${heat.n} actions sur l'ensemble du match (du jaune, peu présent, au rouge, très présent).`
+    : `${heat.name} : aucune action enregistrée dans ce match (joueur resté sur le banc ?).`;
 }
-$('#selHeat').onclick = async () => {
-  const t = selTok(), btn = $('#selHeat');
-  if (!t || !t.pid) return;
+async function heatFor(p, side, btn) {
+  const label = btn.textContent;
   btn.disabled = true; btn.textContent = 'Chargement…';
-  try { await showHeat(t); } catch (_) { alert('Données indisponibles pour ce joueur.'); }
-  btn.disabled = false; btn.textContent = 'Heat map du joueur';
+  try { await showHeat({ pid: p.pid, team: side, name: p.name, number: p.number }); heat.key = side + ':' + p.pid; }
+  catch (_) { alert('Données indisponibles pour ce joueur.'); }
+  btn.disabled = false; btn.textContent = label;
   renderHeatCard(); render();
-};
-$('#heatHide').onclick = () => { heat = null; renderHeatCard(); render(); };
-
-// ---------- Minute du match ----------
-function renderMinute() {
-  const mt = state.match, card = $('#minCard');
-  card.hidden = !mt;
-  if (!mt) return;
-  $('#minRange').value = mt.minute || 0;
-  $('#minLbl').textContent = (mt.minute || 0) + "'";
-  if (mt.win) $('#minWin').value = mt.win;
-  $('#winRow').hidden = mt.src !== 'sb';
-  $('#minHint').textContent = mt.src === 'sb'
-    ? "Remplace la palette par la situation à cette minute : joueurs présents, position moyenne réelle de chacun pendant la période choisie (d'après ses actions : passes, réceptions, conduites, pressings…) et ballon. Minute 0 : composition de départ."
-    : "Remplace la palette par la composition à cette minute (remplacements pris en compte). Les positions réelles des joueurs n'existent que pour les matchs des archives StatsBomb.";
 }
-$('#minRange').oninput = e => { $('#minLbl').textContent = e.target.value + "'"; };
-$('#minApply').onclick = async () => {
-  const mt = state.match, btn = $('#minApply');
-  if (!mt) return;
-  const minute = +$('#minRange').value || null;
-  btn.disabled = true; btn.textContent = 'Chargement…';
-  try {
-    const s = mt.src === 'sb' ? await loadStatsBomb(mt.id, mt.m, minute, +$('#minWin').value)
-      : await loadEspn(mt.comp, mt.id, mt.m, mt.hTeam, mt.aTeam, minute);
-    for (const k of ['home', 'away']) s.teams[k].color = state.teams[k].color;
-    s.view = state.view; s.mode = state.mode;
-    setState(s);
-  } catch (_) { alert('Données indisponibles pour cette minute.'); }
-  btn.disabled = false; btn.textContent = 'Afficher cette minute';
+$('#heatShow').onclick = () => {
+  const [side, pid] = $('#heatSel').value.split(':');
+  const p = [...state.tokens.filter(t => t.team === side), ...state.teams[side].bench].find(x => String(x.pid) === pid);
+  if (p) heatFor(p, side, $('#heatShow'));
 };
+$('#selHeat').onclick = () => { const t = selTok(); if (t && t.pid) heatFor(t, t.team, $('#selHeat')); };
+$('#heatHide').onclick = () => { heat = null; renderHeatCard(); render(); };
 
 $('#btnMatches').onclick = () => {
   $('#modal').hidden = false;
