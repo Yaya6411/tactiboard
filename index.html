@@ -63,8 +63,14 @@
       <h3>Joueur sélectionné</h3>
       <label>Nom <input id="selName" type="text"></label>
       <label>Numéro <input id="selNum" type="text" maxlength="3"></label>
+      <button id="selHeat" hidden>Heat map du joueur</button>
       <button id="selBench">Envoyer sur le banc</button>
       <button id="selDel" class="danger">Supprimer</button>
+    </div>
+    <div class="card" id="heatCard" hidden>
+      <h3>Heat map</h3>
+      <p class="hint" id="heatLbl"></p>
+      <button id="heatHide">Masquer la heat map</button>
     </div>
     <div class="card" id="minCard" hidden>
       <h3>Minute du match</h3>

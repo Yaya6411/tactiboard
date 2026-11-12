@@ -29,6 +29,7 @@ let selection = [];          // ids des pions sélectionnés
 let undoStack = [];
 let play = null;             // {t, last} pendant la lecture
 let drag = null;             // action de pointeur en cours
+let heat = null;             // heat map affichée : {pid, name, cells:[[x, y, w, h, intensité]]}
 
 // Positions d'une formation « 4-3-3 » pour une équipe (home = attaque vers la droite)
 function formationPositions(str, team) {
@@ -90,12 +91,13 @@ function undo() {
 function setState(s) {
   stopPlay();
   snapshot();
-  state = normalize(s); selection = [];
+  state = normalize(s); selection = []; heat = null;
   syncUI(); render();
 }
 
 // ---------- Terrain (statique) ----------
 function drawPitch() {
+  el('feGaussianBlur', { stdDeviation: 1.7 }, el('filter', { id: 'heatBlur', x: '-10%', y: '-10%', width: '120%', height: '120%' }, el('defs', {}, svg)));
   const view = el('g', { id: 'gView' }, svg);
   const g = el('g', { id: 'gPitch' }, view);
   el('rect', { x: -4, y: -4, width: 113, height: 76, fill: '#2c7a43' }, g);
@@ -320,6 +322,12 @@ function render() {
   const frame = play ? state.frames[Math.min(Math.floor(play.t), state.frames.length - 1)] : state.frames[state.cur];
   const dots = state.mode === 'dots';
 
+  // heat map du joueur choisi, sous tout le reste
+  if (heat) {
+    const hg = el('g', { filter: 'url(#heatBlur)', 'pointer-events': 'none' }, g);
+    heat.cells.forEach(([x, y, w, h, v]) => el('rect', { x, y, width: w, height: h, fill: `hsl(${Math.round(60 - 60 * v)} 100% 50%)`, 'fill-opacity': r2(0.2 + 0.65 * v) }, hg));
+  }
+
   // zones d'abord (sous les joueurs), puis autres dessins
   frame.drawings.forEach((d, i) => { if (d.type === 'zone') drawShape(g, d, i); });
 
@@ -407,6 +415,7 @@ function renderSelPanel() {
   const t = selection.length === 1 ? state.tokens.find(x => x.id === selection[0]) : null;
   if (!t || t.team === 'ball') { card.hidden = true; return; }
   card.hidden = false;
+  $('#selHeat').hidden = !(state.match && state.match.src === 'sb' && t.pid);
   $('#selName').value = t.name || '';
   $('#selNum').value = t.number || '';
 }
@@ -422,7 +431,7 @@ function syncUI() {
     sel.value = tm.formation || FORMATIONS[0];
   });
   $('#saveName').value = state.title || '';
-  applyView(); renderTimeline(); renderSelPanel(); renderSaved(); renderBench(); renderMinute();
+  applyView(); renderTimeline(); renderSelPanel(); renderSaved(); renderBench(); renderMinute(); renderHeatCard();
 }
 
 // ---------- Interaction pointeur ----------
@@ -973,7 +982,7 @@ function buildBoard(m, teams, match) {
       if (t.color) tm.color = t.color;
       const st = [...t.starters].sort((a, b) => a.d - b.d);
       const parts = (t.formation || '').split('-').map(Number);
-      const put = (p, x, y, line) => addToken(side, x, y, { number: p.number, name: p.name, line });
+      const put = (p, x, y, line) => addToken(side, x, y, { number: p.number, name: p.name, line, ...(p.pid ? { pid: p.pid } : {}) });
       if (parts.length > 1 && parts.every(n => n > 0 && n < 7) && parts.reduce((a, b) => a + b, 0) === st.length - 1) {
         const slots = formationPositions(t.formation, side);
         put(st[0], slots[0].x, slots[0].y, 0);
@@ -1040,9 +1049,9 @@ async function loadStatsBomb(id, m, minute = null, win = 5) {
     if (pl.some(p => p.pos)) {
       t.starters = pl.filter(p => p.pos).map(p => {
         const [d, w] = SB_POS[p.pos.position] || [45, 50];
-        return { number: p.number, name: p.name, d, w, xy: avg[p.id] && sbXY(avg[p.id], side) };
+        return { number: p.number, name: p.name, pid: p.id, d, w, xy: avg[p.id] && sbXY(avg[p.id], side) };
       });
-      t.bench = pl.filter(p => !p.pos).map(p => ({ number: p.number, name: p.name, in: p.played }));
+      t.bench = pl.filter(p => !p.pos).map(p => ({ number: p.number, name: p.name, pid: p.id, in: p.played }));
     } else {                       // anciennes données sans postes : 11 premiers en 4-4-2
       t.formation = '4-4-2';
       t.starters = pl.slice(0, 11).map((p, k) => ({ number: p.number, name: p.name, d: k, w: k }));
@@ -1092,6 +1101,45 @@ async function loadEspn(comp, id, m, hTeam, aTeam, minute = null) {
   const slim = t => ({ color: t.color, alternateColor: t.alternateColor });
   return buildBoard(m, teams, { src: 'espn', comp, id, minute, hTeam: slim(hTeam), aTeam: slim(aTeam) });
 }
+
+// ---------- Heat map par joueur (matchs StatsBomb) ----------
+// Densité des actions du joueur sur tout le match, sur une grille lissée
+async function showHeat(tok) {
+  const mt = state.match;
+  if (sbEvents.id !== mt.id) sbEvents = { id: mt.id, ev: await getJSON(`${SB}events/${mt.id}.json`) };
+  const NX = 35, NY = 23, cw = W / NX, ch = H / NY;
+  let grid = Array.from({ length: NY }, () => new Array(NX).fill(0)), n = 0;
+  for (const e of sbEvents.ev) {
+    if (!e.location || !e.player || e.player.id !== tok.pid || e.period > 4) continue;
+    const [x, y] = sbXY(e.location, tok.team);
+    grid[Math.min(NY - 1, Math.floor(y / ch))][Math.min(NX - 1, Math.floor(x / cw))]++;
+    n++;
+  }
+  for (let pass = 0; pass < 2; pass++) {           // lissage
+    grid = grid.map((row, j) => row.map((_, i) => {
+      let sum = 0;
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) sum += ((grid[j + dj] || [])[i + di] || 0) * (di || dj ? 1 : 2);
+      return sum / 10;
+    }));
+  }
+  const max = Math.max(...grid.flat());
+  const cells = [];
+  if (max > 0) grid.forEach((row, j) => row.forEach((v, i) => { if (v / max > 0.06) cells.push([r2(i * cw), r2(j * ch), r2(cw), r2(ch), r2(v / max)]); }));
+  heat = { pid: tok.pid, name: tok.name || tok.number, n, cells };
+}
+function renderHeatCard() {
+  $('#heatCard').hidden = !heat;
+  if (heat) $('#heatLbl').textContent = heat.n ? `${heat.name} : ${heat.n} actions sur l'ensemble du match (du jaune, peu présent, au rouge, très présent).` : `${heat.name} : aucune action enregistrée dans ce match.`;
+}
+$('#selHeat').onclick = async () => {
+  const t = selTok(), btn = $('#selHeat');
+  if (!t || !t.pid) return;
+  btn.disabled = true; btn.textContent = 'Chargement…';
+  try { await showHeat(t); } catch (_) { alert('Données indisponibles pour ce joueur.'); }
+  btn.disabled = false; btn.textContent = 'Heat map du joueur';
+  renderHeatCard(); render();
+};
+$('#heatHide').onclick = () => { heat = null; renderHeatCard(); render(); };
 
 // ---------- Minute du match ----------
 function renderMinute() {
@@ -1175,12 +1223,12 @@ function benchClick(team, i) {
   const bench = state.teams[team].bench, b = bench[i];
   const t = selection.length === 1 ? selTok() : null;
   if (t && t.team === team) {                      // changement : le remplaçant prend la place du joueur sélectionné
-    bench[i] = { number: t.number, name: t.name };
-    t.number = b.number; t.name = b.name;
+    bench[i] = { number: t.number, name: t.name, pid: t.pid };
+    t.number = b.number; t.name = b.name; t.pid = b.pid;
   } else {                                         // sinon il entre sur le terrain
     bench.splice(i, 1);
     const n = state.tokens.filter(x => x.team === team).length;
-    const tk = addToken(team, spawnX(team, n), H - 3, { number: b.number, name: b.name });
+    const tk = addToken(team, spawnX(team, n), H - 3, { number: b.number, name: b.name, pid: b.pid });
     selection = [tk.id];
   }
   renderBench(); renderSelPanel(); render();
@@ -1189,7 +1237,7 @@ $('#selBench').onclick = () => {
   const t = selTok();
   if (!t || t.team === 'ball') return;
   snapshot();
-  state.teams[t.team].bench.push({ number: t.number, name: t.name });
+  state.teams[t.team].bench.push({ number: t.number, name: t.name, pid: t.pid });
   state.tokens = state.tokens.filter(x => x !== t);
   state.frames.forEach(f => delete f.pos[t.id]);
   detach([t.id]);
